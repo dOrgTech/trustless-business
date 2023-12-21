@@ -16,6 +16,8 @@ The Project can be described by describing its functions, its states, and its es
 
 The Functions of a Project
 
+![stages](https://i.ibb.co/DwpHPkr/stages2.png)
+
 These are the available interactions that the Project is able to accept at different stages of its life cycle, with their respective parameters, and access restrictions:
 
 Origination - Open. This is a constructor function. 
