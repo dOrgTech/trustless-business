@@ -9,15 +9,18 @@ contract Economy {
     mapping (address => uint) public earned;
     mapping (address => uint) public spent;
     // Function to deploy a new Project contract
+    function getNumberOfProjects() public view returns (uint) {
+        return deployedProjects.length;
+    }
+
     function createProject(
     string memory name, 
-    address contractor, 
+    address contractor,
     address arbiter, 
-    
-    string memory termsHash, 
+    string memory termsHash,
     string memory repo
     // Make sure to pass the arbitration fee as an argument if it's not a fixed value in the Economy contract
-) public payable {
+    ) public payable {
     NativeProject newProject;
     if (contractor != address(0) && arbiter != address(0)) {
         // If both contractor and arbiter are specified, the project will be in "pending" stage
@@ -30,10 +33,10 @@ contract Economy {
         // If the contractor is not specified, the project is in "open" stage
         newProject = new NativeProject(address(this),
             name, msg.sender, address(0), address(0), termsHash, repo, arbitrationFee
-        );
-    }
-    deployedProjects.push(address(newProject));
-    isProjectContract[address(newProject)] = true;
+            );
+        }
+        deployedProjects.push(address(newProject));
+        isProjectContract[address(newProject)] = true;
     }
 
     function updateEarnings(address user, uint amount) external {
@@ -109,14 +112,15 @@ contract NativeProject {
         }
     }
 
-    function setParties(address _contractor, address _arbiter) public payable{
+    function setParties(address _contractor, address _arbiter, string memory _termsHash) public payable{
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("open")) || 
         keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("pending")), 
-        "Can't set the parties unless the project is in 'open' or 'pending' stage.");
+        "Parties can be set only in 'open' or 'pending' stage.");
         require (msg.sender==author,"Only the Project's Author can set the other parties.");
         require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee to sign the contract.");
         contractor=_contractor;
         arbiter=_arbiter;
+        termsHash=_termsHash;
         stage="pending";
     }
 
@@ -238,6 +242,7 @@ contract NativeProject {
         if (totalVotesForRelease > address(this).balance * 70 / 100) {
             stage = "closed";
             availableToContractor = projectValue;
+            availableToContributors=0;
             emit ProjectClosed(msg.sender);
         }
     }
