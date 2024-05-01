@@ -2,12 +2,16 @@
 pragma solidity ^0.8.0;
 
 contract Economy {
+
     // Array to hold addresses of deployed projects
     address[] public deployedProjects;
     mapping(address => bool) public isProjectContract;
     uint public arbitrationFee=200;
-    mapping (address => uint) public earned;
-    mapping (address => uint) public spent;
+    mapping (address => uint) public nativeEarned;
+    mapping (address => uint) public nativeSpent;
+    mapping (address => uint) public usdtEarned;
+    mapping (address => uint) public usdtSpent;
+
     // Function to deploy a new Project contract
     function getNumberOfProjects() public view returns (uint) {
         return deployedProjects.length;
@@ -19,7 +23,6 @@ contract Economy {
     address arbiter, 
     string memory termsHash,
     string memory repo
-    // Make sure to pass the arbitration fee as an argument if it's not a fixed value in the Economy contract
     ) public payable {
     NativeProject newProject;
     if (contractor != address(0) && arbiter != address(0)) {
@@ -30,7 +33,7 @@ contract Economy {
             address(this),name,msg.sender,contractor,arbiter,termsHash,repo,arbitrationFee
         );
     } else {
-        // If the contractor is not specified, the project is in "open" stage
+        // If the contractor is not specified, the project is in "open" stage 
         newProject = new NativeProject(address(this),
             name, msg.sender, address(0), address(0), termsHash, repo, arbitrationFee
             );
@@ -38,23 +41,22 @@ contract Economy {
         deployedProjects.push(address(newProject));
         isProjectContract[address(newProject)] = true;
     }
-
-    function updateEarnings(address user, uint amount) external {
-        require(isProjectContract[msg.sender], "Only authorized Project contracts can call this function.");
-        earned[user] += amount;
+    function updateEarnings(address user, uint amount, bool native) external {
+        require(isProjectContract[msg.sender], "Only Project contracts can call this function.");
+        if (native){nativeEarned[user] += amount;}else{usdtEarned[user] += amount;}
     }
 
-    function updateSpendings(address user, uint amount) external {
-        require(isProjectContract[msg.sender], "Only authorized Project contracts can call this function.");
-        spent[user] += amount;
+    function updateSpendings(address user, uint amount,bool native) external {
+        require(isProjectContract[msg.sender], "Only Project contracts can call this function.");
+         if (native){nativeSpent[user] += amount;}else{usdtSpent[user] += amount;}
     }
-
 }
 
 
 contract NativeProject {
     // state variables
     Economy public economy;
+    uint public coolingOffPeriodEnds;
     string public name;
     address public author;
     address public contractor;
@@ -66,7 +68,6 @@ contract NativeProject {
     mapping (address => uint) public contributorsReleasing;
     mapping (address => uint) public contributorsDisputing;
     uint public availableToContractor;
-    uint public availableToContributors;
     uint public totalVotesForRelease;
     uint public totalVotesForDispute;
     uint public projectValue;
@@ -99,11 +100,11 @@ contract NativeProject {
         termsHash = _termsHash;
         repo = _repo;
         availableToContractor = 0;
-        availableToContributors = 0;
+       
         totalVotesForRelease=0;
         totalVotesForDispute=0;
         projectValue=0;
-        disputeResolution = 0;
+        disputeResolution = 100;
         arbitrationFee = _arbitrationFee;
         ruling_hash = "";
         if (contractor != address (0) && arbiter != address (0)) { // check if the contractor and arbiter are assigned.
@@ -123,12 +124,12 @@ contract NativeProject {
         {
         require(msg.value >= arbitrationFee / 2, "Must stake half of the arbitration fee.");
         }
+        coolingOffPeriodEnds = block.timestamp + 2 minutes;
         contractor=_contractor;
         arbiter=_arbiter;
         termsHash=_termsHash;
         stage="pending";
     }
-
 
     function sendFunds() public payable {
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("open")) ||
@@ -139,7 +140,6 @@ contract NativeProject {
     }
 
     event ContractorPaid(address contractor);
-
     function withdrawAsContractor() public {
         require(
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")),
@@ -149,27 +149,28 @@ contract NativeProject {
         uint256 amountToWithdraw = availableToContractor;
         availableToContractor = 0; // Prevent re-entrancy by zeroing before transfer
         (bool sent, ) = payable(contractor).call{value: amountToWithdraw}("");
-        economy.updateEarnings(contractor, amountToWithdraw);
-        require(sent, "Failed to send Ether to contractor.");
+        economy.updateEarnings(contractor, amountToWithdraw, true);
+        require(sent, "Failed");
         emit ContractorPaid(contractor);
     }
 
     function updateContributorSpendings()public{
         require(
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")),
-            "Stats for the contributor can be updated once the project is closed.");
+            "Stats can be updated once the project is closed.");
         uint expenditure=contributors[msg.sender];
+        if (expenditure>0){
         contributors[msg.sender]=0;
-        economy.updateSpendings(msg.sender,expenditure);
+        economy.updateSpendings(msg.sender,expenditure,true);
+        }
     }
-
 
     function reclaimArbitrationFee()public{
         require(
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")) ,
             "Arbitration fee can be reclaimed once the project is closed.");
         require (arbitrationFeePaidOut==false, "The fee has been paid out to the Arbiter (because there was a dispute).");
-        require (msg.sender==author||msg.sender==contractor, "Arbitration fee can only be returned to the parties that stakes it");
+        require (msg.sender==author||msg.sender==contractor, "Arbitration fee can only be returned to the parties.");
         if (msg.sender==author){
             require(authorWithdrawnArbitrationFee==false, "You have already claimed this back.");
             authorWithdrawnArbitrationFee=true;
@@ -186,30 +187,15 @@ contract NativeProject {
         }
     }
 
-
     function withdrawAsContributor() public {
         require(
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("open"))||
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("pending"))||
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")) ,
          "Withdrawals only allowed when the project is open, pending or closed.");
-        if ( keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")))
-        {
-        require(availableToContributors>0,"There are no funds available to contributors.");
-        }
-
         uint256 contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "No contributions to withdraw.");      
-        uint256 exitAmount;
-        if (disputeResolution>0){
-            exitAmount = (contributorAmount * availableToContributors) / projectValue;
-            uint expenditure=contributorAmount-exitAmount;
-            economy.updateSpendings(msg.sender,expenditure);
-        }else{
-            exitAmount = contributorAmount;
-        }
-        availableToContributors=availableToContributors-exitAmount;
-        contributors[msg.sender] = 0; // Prevent re-entrancy
+        uint256 exitAmount = (contributorAmount / 100 ) * disputeResolution;
+        contributors[msg.sender] = 0; 
         (bool sent, ) = payable(msg.sender).call{value: exitAmount}("");
         require(sent, "Failed to send Ether");
     }
@@ -220,6 +206,7 @@ contract NativeProject {
         require(msg.sender == contractor, "Only the designated contractor can sign the contract");
         // Check if the project is in the "pending" stage
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("pending")), "The project can only be signed while in `pending` stage.");
+        require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         // Update the stage to "ongoing"
         require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee to sign the contract.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
@@ -234,6 +221,7 @@ contract NativeProject {
         // Check that the project is currently in the "ongoing" stage
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("ongoing")), "This action can only be performed while the project is ongoing.");
         // Move the project to "closed" mode
+        
         stage = "closed";
         emit ProjectClosed(msg.sender);
     }
@@ -250,11 +238,10 @@ contract NativeProject {
         }
         contributorsReleasing[msg.sender] = contributors[msg.sender];
         // Check if the threshold for releasing the payment is met
-        if (totalVotesForRelease > address(this).balance * 70 / 100) {
+        if (totalVotesForRelease >projectValue * 70 / 100) {
             stage = "closed";
             availableToContractor = projectValue;
             fundsReleased = true;
-            availableToContributors=0;
             emit ProjectClosed(msg.sender);
         }
     }
@@ -272,7 +259,7 @@ contract NativeProject {
         }
         contributorsDisputing[msg.sender] = contributors[msg.sender];
         // Check if the threshold for disputing the project is met
-        if (totalVotesForDispute > address(this).balance * 70 / 100) {
+        if (totalVotesForDispute > projectValue * 70 / 100) {
             stage = "dispute";
             emit ProjectDisputed(msg.sender);
         }
@@ -286,17 +273,17 @@ contract NativeProject {
     }
 
     function arbitrate(uint256 percent, string memory rulingHash) public {
+        require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("dispute")), "Arbitration can only occur if the project is in dispute.");
         require(msg.sender == arbiter, "Only the Arbiter can call this function");
         require(percent >= 0 && percent <= 100, "Resolution needs to be a number between 0 and 100");
-        require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("dispute")), "Arbitration can only occur if the project is in dispute.");
         availableToContractor = (projectValue * percent) / 100;
-        availableToContributors = projectValue - availableToContractor;
+        // availableToContributors = projectValue - availableToContractor;
         disputeResolution=percent;
         ruling_hash = rulingHash;
         payable(arbiter).transfer(arbitrationFee);
         arbitrationFeePaidOut = true;
         stage = "closed";
-        economy.updateEarnings(arbiter, arbitrationFee);
+        economy.updateEarnings(arbiter, arbitrationFee,true);
         emit ProjectClosed(msg.sender);
     }
 }
