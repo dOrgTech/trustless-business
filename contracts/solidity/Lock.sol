@@ -100,7 +100,6 @@ contract NativeProject {
         termsHash = _termsHash;
         repo = _repo;
         availableToContractor = 0;
-       
         totalVotesForRelease=0;
         totalVotesForDispute=0;
         projectValue=0;
@@ -194,7 +193,7 @@ contract NativeProject {
             keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("closed")) ,
          "Withdrawals only allowed when the project is open, pending or closed.");
         uint256 contributorAmount = contributors[msg.sender];
-        uint256 exitAmount = (contributorAmount / 100 ) * disputeResolution;
+        uint256 exitAmount = (contributorAmount / 100 ) * (100 - disputeResolution);
         contributors[msg.sender] = 0; 
         (bool sent, ) = payable(msg.sender).call{value: exitAmount}("");
         require(sent, "Failed to send Ether");
@@ -276,7 +275,7 @@ contract NativeProject {
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("dispute")), "Arbitration can only occur if the project is in dispute.");
         require(msg.sender == arbiter, "Only the Arbiter can call this function");
         require(percent >= 0 && percent <= 100, "Resolution needs to be a number between 0 and 100");
-        availableToContractor = (projectValue * percent) / 100;
+        availableToContractor = (projectValue / 100) * percent;
         // availableToContributors = projectValue - availableToContractor;
         disputeResolution=percent;
         ruling_hash = rulingHash;
