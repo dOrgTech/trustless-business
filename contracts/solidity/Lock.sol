@@ -229,7 +229,7 @@ contract NativeProject {
             require(authorWithdrawnArbitrationFee==false, "You have already claimed this back.");
             authorWithdrawnArbitrationFee=true;
             uint amountToWithdraw=arbitrationFee/2;
-            (bool sent, ) = payable(contractor).call{value: amountToWithdraw}("");
+            (bool sent, ) = payable(author).call{value: amountToWithdraw}("");
             require(sent, "Failed to withdraw.");
         }
         if (msg.sender==contractor){
