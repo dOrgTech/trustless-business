@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+//token address 0x7f0aE0670AeA108158512880A78165eF8b5Ea79F
+
 contract TestUSDT is ERC20 {
     constructor(string memory name, string memory symbol, uint256 initialSupply) ERC20(name, symbol) {
         _mint(msg.sender, initialSupply);
@@ -18,7 +20,7 @@ contract USDTEconomy {
     // Array to hold addresses of deployed projects
     address[] public deployedProjects;
     IERC20 usdt;
-    address usdtAddress;
+    address public usdtAddress;
     address payable admin;
     mapping(address => bool) public isProjectContract;
     uint public arbitrationFee=1000000000;
@@ -26,10 +28,14 @@ contract USDTEconomy {
     mapping (address => uint) public nativeSpent;
     mapping (address => uint) public usdtEarned;
     mapping (address => uint) public usdtSpent;
-    constructor(address _usdtAddress){
-        admin = payable(msg.sender); usdtAddress=_usdtAddress; 
+    constructor(
+        // address _usdtAddress
+        ){
+        admin = payable(msg.sender); 
+        // usdtAddress=_usdtAddress; 
         // usdt=IERC20(usdtAddress);
         usdt = new TestUSDT("TestUSDT", "USDT", 100_000_000 * 10**6);
+        usdtAddress=address(usdt);
         }
 
     event TokensReceived(address from, uint256 amount);
@@ -37,11 +43,14 @@ contract USDTEconomy {
         // Custom logic to handle the received tokens
         emit TokensReceived(from, amount);
     }
-
     //ONLY FOR TESTING PURPOSES
     function sendTestUSDT(address _to, uint256 _amount) public {
         // TODO send rep from source.
         usdt.transfer(_to, _amount);
+    }
+
+    function getUSDTBalance() external view returns (uint256) {
+        return usdt.balanceOf(address(this));
     }
 
     event InboundValue();
@@ -71,7 +80,7 @@ contract USDTEconomy {
     ) public payable {
     USDTProject newProject;
     if (contractor != address(0) && arbiter != address(0)) {
-        require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee.");
+        require(usdt.transferFrom(msg.sender, address(this), arbitrationFee / 2), "Must stake half the arbitration fee." );
         newProject = (new USDTProject){value: msg.value}(
            usdtAddress, payable(address(this)),name,msg.sender,contractor,arbiter,termsHash,repo,arbitrationFee
         );
@@ -101,8 +110,6 @@ contract USDTEconomy {
         require(msg.sender == admin, "Only the contract owner can withdraw Ether");
         payable(msg.sender).transfer(address(this).balance);
     }
-
-    
 }
 
 contract USDTProject {
@@ -182,7 +189,11 @@ contract USDTProject {
             "}"
         ));
     }
- 
+    
+    function getUSDTBalance() external view returns (uint256) {
+        return usdt.balanceOf(address(this));
+    }
+
     function arbitrationPeriodExpired() public payable {
         require(keccak256(abi.encodePacked(stage)) == keccak256(abi.encodePacked("dispute"))
         &&
