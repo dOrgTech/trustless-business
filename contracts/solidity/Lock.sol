@@ -375,6 +375,8 @@ contract NativeProject {
     ) external returns (bool) {
         bool stateMatches = this.checkState(targetContract, slot, expectedValue);
         if (stateMatches) {
+            availableToContractor=projectValue;
+            stage = "closed";
             return true;
         }
         return false;
