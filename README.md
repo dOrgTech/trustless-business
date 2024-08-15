@@ -1,6 +1,6 @@
-Homebase Projects
+Trustless Business
 
-andrei@dorg.tech	      Sep 30, 2023
+andrei@dorg.tech
 
 
 
@@ -105,7 +105,7 @@ Return Funds to Project Backers
 Closed. Once the funds held in escrow have been released to either party (or to both through arbitration). The Project will not accept any further interactions.
 Available functions: (None)
 
-The Escrow Functionality
+## The Escrow Functionality
 
 A key enabling factor of the trustless workflow described here is the ability to hold funds in escrow in a publicly readable manner. This is achieved through the use of a few data structures:
 
@@ -128,7 +128,48 @@ Key<Integer>: Index position of the payment token they are transferring to the P
 Value<Integer>: Amount they are transferring, including the decimals.
 If it’s not the first time they are funding the project with the specific token they are using in the call, no new entries will be created in either the contributions or nested mapping, and instead, the value corresponding to the amount will be increased with the value they are sending.
 
+## Programmatic Outcome: Automated Project Completion and Fund Release
 
-Chain-specific requirements
+A novel mechanism for project completion and fund release: Programmatic Outcome. This feature leverages automates the verification of project completion, eliminating the need for manual approvals or arbitration in specific scenarios.
+Programmatic Outcome allows project stakeholders to define success criteria in terms of on-chain state changes. The project's completion is determined by verifying the state of a specified target contract. When the target contract reaches the predefined state, it automatically triggers the release of funds to the Contractor.
+
+### Key Components
+
+1. **Target Contract**: The smart contract whose state will be monitored for project completion.
+2. **Desired State**: A specific condition or set of conditions that the target contract must meet.
+3. **State Verification Mechanism**: A low-level function capable of reading and verifying the state of any smart contract on the network.
+
+### Project Setup with Programmatic Outcome
+
+When deploying a Project with Programmatic Outcome, the setup process differs slightly from the standard Homebase Project:
+
+1. **Author**: Initiates the project and defines the success criteria.
+2. **Contractor**: The entity responsible for achieving the desired state in the target contract.
+3. **Target Contract**: The address of the contract whose state will determine project completion.
+4. **Desired State**: The specific state or condition that must be met in the target contract.
+
+Notably, there is no need to select an Arbiter in this setup, as the state verification is performed automatically by the smart contract.
+
+### Technical Implementation
+
+The core of Programmatic Outcome relies on a Generic State Checker function within the Project contract. This function uses low-level Ethereum operations to read the storage of the Target Contract:
+
+1. **Storage Reading**: Utilizes `staticcall` and assembly-level `sload` to directly read the Target Contract's storage.
+2. **State Verification**: Compares the read storage data against the Desired State defined at project initiation.
+3. **Conditional Execution**: If the state matches, it triggers the fund release mechanism.
+
+
+### Use Cases
+
+1. **DeFi Protocol Upgrades**: Automatically reward developers when a protocol reaches specific metrics or states.
+2. **Smart City Projects**: Release funds when IoT devices report certain environmental conditions.
+3. **Supply Chain Milestones**: Trigger payments when products reach specific stages in a blockchain-tracked supply chain.
+4. **Decentralized Oracles**: Incentivize oracle providers to maintain certain accuracy or uptime metrics.
+
+
+By leveraging the deterministic nature of blockchain technology, programmatic outcomes opens up possibilities for faster business workflows, further solidifying the potential of decentralized technologies to support high-frequency collaborations.
+
+
+# Chain-specific requirements
 
 Depending on the underlying blockchain, certain protocol-specific requirements may affect the workflow of funding and operating a Project. On the Ethereum blockchain, for instance, funding a project with an ERC-20 token entails a two-step process. Initially, a token holder must approve the Project's smart contract to withdraw the specified amount of tokens on their behalf, by calling the approve function on the respective ERC-20 contract, specifying the Project’s contract address and the amount to be allowed. Subsequently, they can execute the funding function on the Project’s smart contract, which will trigger the transfer of the approved amount from their address to the Project’s contract address.
