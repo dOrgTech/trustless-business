@@ -345,6 +345,42 @@ contract NativeProject {
         economy.updateEarnings(arbiter, arbitrationFee,true);
         emit ProjectClosed(msg.sender);
     }
+
+      function checkState(address targetContract, bytes32 slot, bytes32 expectedValue) external view returns (bool) {
+        bytes32 value;
+        assembly {
+            // Use staticcall to read storage from the target contract
+            let success := staticcall(
+                gas(),           // Forward all available gas
+                targetContract,  // The target contract address
+                0x0,             // No calldata offset (not used for staticcall)
+                0x0,             // No calldata length (not used for staticcall)
+                0x0,             // No output offset (we're not expecting a return value)
+                0x0              // No output length (we're not expecting a return value)
+            )
+            // Check if the call was successful
+            if iszero(success) {
+                revert(0, 0)
+            }
+            // Read the storage slot from the target contract
+            value := sload(slot)
+        }
+        return value == expectedValue;
+    }
+
+    function executeIfStateMatches(
+        address targetContract,
+        bytes32 slot,
+        bytes32 expectedValue
+    ) external returns (bool) {
+        bool stateMatches = this.checkState(targetContract, slot, expectedValue);
+        if (stateMatches) {
+            return true;
+        }
+        return false;
+    }
+
+
         // Helper function to convert uint to string
     function uintToString(uint value) internal pure returns (string memory) {
         if (value == 0) {
