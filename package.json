@@ -23,5 +23,8 @@
   "homepage": "https://github.com/EightRice/projects#readme",
   "devDependencies": {
     "hardhat": "^2.18.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.1.0"
   }
 }
