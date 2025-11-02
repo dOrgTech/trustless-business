@@ -40,7 +40,6 @@ contract NativeProject is Initializable {
     }
     Stage public stage;
 
-    // --- NEW STRUCT DEFINITION ---
     struct ProjectDetails {
         string name;
         address author;
@@ -58,7 +57,6 @@ contract NativeProject is Initializable {
     uint256 public constant COOLING_OFF_PERIOD = 2 minutes;
     uint256 public constant ARBITRATION_TIMEOUT = 150 days;
 
-    // Events
     event SetParties(address _contractor, address _arbiter, string _termsHash);
     event SendFunds(address who, uint256 howMuch);
     event ContractorPaid(address contractor, uint256 amount);
@@ -90,6 +88,9 @@ contract NativeProject is Initializable {
         arbitrationFee = _arbitrationFee;
         ruling_hash = "";
 
+        // --- NEW: Register roles on initialization ---
+        economy.registerProjectRoles(address(this), _author, _contractor, _arbiter);
+
         if (contractor != address(0) && arbiter != address(0)) {
             require(
                 msg.value >= arbitrationFee / 2,
@@ -101,7 +102,6 @@ contract NativeProject is Initializable {
         }
     }
     
-    // --- NEW GETTER FUNCTION ---
     function getProjectDetails() public view returns (ProjectDetails memory) {
         return ProjectDetails({
             name: name,
@@ -117,8 +117,6 @@ contract NativeProject is Initializable {
             fundsReleased: fundsReleased
         });
     }
-
-    // --- All other functions remain exactly the same ---
     
     function arbitrationPeriodExpired() public {
         require(stage == Stage.Dispute, "Project must be in dispute stage");
@@ -136,8 +134,8 @@ contract NativeProject is Initializable {
         string memory _termsHash
     ) public payable {
         require(
-            stage == Stage.Open || stage == Stage.Pending,
-            "Parties can be set only in 'open' or 'pending' stage."
+            stage == Stage.Open, // Can only be called from Open stage
+            "Parties can only be set in 'open' stage."
         );
         require(
             msg.sender == author,
@@ -147,18 +145,19 @@ contract NativeProject is Initializable {
             _contractor != address(0) && _arbiter != address(0),
             "Contractor and arbiter addresses must be valid."
         );
-
-        if (stage == Stage.Open) {
-            require(
-                msg.value >= arbitrationFee / 2,
-                "Must stake half of the arbitration fee."
-            );
-        }
+        require(
+            msg.value >= arbitrationFee / 2,
+            "Must stake half of the arbitration fee."
+        );
 
         coolingOffPeriodEnds = block.timestamp + COOLING_OFF_PERIOD;
         contractor = _contractor;
         arbiter = _arbiter;
         termsHash = _termsHash;
+        
+        // --- NEW: Register the new roles ---
+        economy.registerProjectRoles(address(this), address(0), _contractor, _arbiter);
+
         emit SetParties(_contractor, _arbiter, _termsHash);
         stage = Stage.Pending;
     }
