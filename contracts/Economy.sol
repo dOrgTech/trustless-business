@@ -16,6 +16,10 @@ contract Economy is IEconomy {
     mapping(address => bool) public isProjectContract;
     uint public arbitrationFee = 1 ether;
 
+    mapping(address => address[]) public projectsAsAuthor;
+    mapping(address => address[]) public projectsAsContractor;
+    mapping(address => address[]) public projectsAsArbiter;
+
     mapping(address => uint) public nativeEarned;
     mapping(address => uint) public nativeSpent;
     mapping(address => uint) public usdtEarned;
@@ -42,6 +46,18 @@ contract Economy is IEconomy {
     function getUserRep(address userAddress) public view returns (uint, uint, uint, uint) {
         return (nativeEarned[userAddress], nativeSpent[userAddress], usdtEarned[userAddress], usdtSpent[userAddress]);
     }
+    
+    function getUserProfile(address userAddress) 
+        public 
+        view 
+        returns (address[] memory, address[] memory, address[] memory) 
+    {
+        return (
+            projectsAsAuthor[userAddress],
+            projectsAsContractor[userAddress],
+            projectsAsArbiter[userAddress]
+        );
+    }
 
     function createProject(
         string memory name,
@@ -54,13 +70,17 @@ contract Economy is IEconomy {
         require(nativeProjectImplementation != address(0), "Native implementation not set.");
         address payable clone = payable(Clones.clone(nativeProjectImplementation));
         
+        // --- CORRECTED LOGIC ---
+        // 1. Register the project address first.
+        deployedProjects.push(clone);
+        isProjectContract[clone] = true;
+
+        // 2. Now initialize it. The callback will succeed.
         NativeProject(clone).initialize{value: msg.value}(
             payable(address(this)), name, msg.sender, contractor, arbiter, 
             termsHash, repo, arbitrationFee
         );
         
-        deployedProjects.push(clone);
-        isProjectContract[clone] = true;
         emit NewProject(clone, name, contractor, arbiter, termsHash, repo, description, address(0));
     }
 
@@ -77,6 +97,12 @@ contract Economy is IEconomy {
         require(erc20ProjectImplementation != address(0), "ERC20 implementation not set.");
         address clone = Clones.clone(erc20ProjectImplementation);
         
+        // --- CORRECTED LOGIC ---
+        // 1. Register the project address first.
+        deployedProjects.push(clone);
+        isProjectContract[clone] = true;
+
+        // 2. Now initialize it. The callback will succeed.
         ERC20Project(clone).initialize(
             payable(address(this)), tokenAddress, name, msg.sender, contractor, arbiter,
             termsHash, repo, tokenArbitrationFee
@@ -87,8 +113,6 @@ contract Economy is IEconomy {
             IERC20(tokenAddress).transferFrom(msg.sender, clone, feeStake);
         }
         
-        deployedProjects.push(clone);
-        isProjectContract[clone] = true;
         emit NewProject(clone, name, contractor, arbiter, termsHash, repo, description, tokenAddress);
     }
 
@@ -100,6 +124,21 @@ contract Economy is IEconomy {
     function updateSpendings(address user, uint amount, bool native) external override {
         require(isProjectContract[msg.sender], "Only Project contracts can call this function.");
         if (native) { nativeSpent[user] += amount; } else { usdtSpent[user] += amount; }
+    }
+    
+    function registerProjectRoles(address projectAddress, address author, address contractor, address arbiter) external override {
+        require(isProjectContract[msg.sender], "Only Project contracts can call this function.");
+        require(msg.sender == projectAddress, "Project can only register its own roles.");
+
+        if (author != address(0)) {
+            projectsAsAuthor[author].push(projectAddress);
+        }
+        if (contractor != address(0)) {
+            projectsAsContractor[contractor].push(projectAddress);
+        }
+        if (arbiter != address(0)) {
+            projectsAsArbiter[arbiter].push(projectAddress);
+        }
     }
 
     function withdrawNative() public {
