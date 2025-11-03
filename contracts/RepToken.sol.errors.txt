@@ -1,0 +1,6 @@
+Problems found in: RepToken.sol
+==================================================
+
+ERROR at Line 106:9
+   Message: Data location must be "storage", "memory" or "calldata" for variable, but none was given.
+

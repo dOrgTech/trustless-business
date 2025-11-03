@@ -1,1 +1,6 @@
-!lib/
+!contracts/
+contracts/artifacts/
+contracts/.deps/
+contracts/.states/
+!test
+
