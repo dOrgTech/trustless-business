@@ -28,6 +28,7 @@ contract Economy is IEconomy {
     uint public coolingOffPeriod;
     uint public backersVoteQuorumBps;
     uint public projectThreshold;
+    uint public appealPeriod; // NEW
 
     // --- STATE: Project & User Ledgers ---
     address public nativeProjectImplementation;
@@ -61,19 +62,21 @@ contract Economy is IEconomy {
     // --- EVENTS ---
     event InboundValue();
     event NewProject(address indexed contractAddress, string projectName, address contractor, address arbiter, string termsHash, string repo, string description, address token);
-    event DaoAddressesSet(address timelock, address registry, address governor, address repToken);
+    event DaoAddressesSet(address timellock, address registry, address governor, address repToken);
     event PlatformFeeSet(uint newFeeBps);
     event AuthorFeeSet(uint newFeeBps);
     event NativeArbitrationFeeSet(uint newFee);
     event CoolingOffPeriodSet(uint newPeriod);
     event BackersVoteQuorumSet(uint newQuorumBps);
     event ProjectThresholdSet(uint newThreshold);
+    event AppealPeriodSet(uint newPeriod); // NEW
 
     constructor() {
         platformFeeBps = 100; // 1%
         authorFeeBps = 100;   // 1%
         coolingOffPeriod = 2 minutes;
         backersVoteQuorumBps = 7000; // 70%
+        appealPeriod = 7 days; // NEW: Default appeal period
     }
 
     function setImplementations(address _native, address _erc20) external {
@@ -237,6 +240,12 @@ contract Economy is IEconomy {
         require(msg.sender == timelockAddress, "Only DAO Timelock can call");
         projectThreshold = newThreshold;
         emit ProjectThresholdSet(newThreshold);
+    }
+
+    function setAppealPeriod(uint newPeriod) external {
+        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        appealPeriod = newPeriod;
+        emit AppealPeriodSet(newPeriod);
     }
 
     function withdrawNative() public {

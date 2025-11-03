@@ -9,6 +9,11 @@ contract MockRepToken {
         return balances[account];
     }
 
+    // This is the function required by the IVotes interface in the project contracts
+    function getVotes(address account) external view returns (uint256) {
+        return balances[account];
+    }
+
     // Test-only function to mint tokens to an address
     function mint(address to, uint256 amount) external {
         balances[to] += amount;

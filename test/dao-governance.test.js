@@ -124,7 +124,8 @@ describe("DAO-Governed Economy", function () {
             await project.connect(user1).voteToReleasePayment();
 
             // 4. Verify stage changed to Closed
-            expect(await project.stage()).to.equal(4); // 4 = Closed
+            // MODIFIED: The 'Closed' stage enum is now 6.
+            expect(await project.stage()).to.equal(6); // 6 = Closed
         });
     });
 
@@ -154,9 +155,9 @@ describe("DAO-Governed Economy", function () {
                 .to.emit(project, "VetoedByDao").withArgs(timelock.address);
             
             // 3. Verify state
-            expect(await project.stage()).to.equal(4); // Closed
+            // MODIFIED: The 'Closed' stage enum is now 6.
+            expect(await project.stage()).to.equal(6); // Closed
             
-            // --- FIX: The correct value for a full refund is 0 ---
             expect(await project.disputeResolution()).to.equal(0);
 
             // 4. Verify user can get a full refund
