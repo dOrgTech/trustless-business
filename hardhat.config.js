@@ -9,7 +9,7 @@ module.exports = {
     settings: {
       evmVersion: "cancun",
       optimizer: {
-        enabled: false,
+        enabled: true,
         runs: 200, // Same as the value used in Remix
       },
        viaIR: true,
