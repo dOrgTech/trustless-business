@@ -82,7 +82,7 @@ describe("Project Lifecycle under DAO Governance", function () {
 
             // 4. Backers vote to release funds (Closed stage)
             await project.connect(user1).voteToReleasePayment();
-            expect(await project.stage()).to.equal(4); // Closed
+            expect(await project.stage()).to.equal(6); // Closed
             expect(await project.fundsReleased()).to.be.true;
             expect(await project.disputeResolution()).to.equal(0);
 
@@ -136,27 +136,34 @@ describe("Project Lifecycle under DAO Governance", function () {
             await project.connect(user1).voteToDispute();
             expect(await project.stage()).to.equal(3); // Dispute
 
-            // 3. Arbiter makes a ruling (Closed stage)
+            // 3. Arbiter makes a ruling (Appealable stage)
             const arbiterBalanceBefore = await ethers.provider.getBalance(arbiter.address);
             const arbitrateTx = await project.connect(arbiter).arbitrate(arbiterPayoutPercent, "ruling_hash");
-            const receipt = await arbitrateTx.wait();
-            const gasUsed = receipt.gasUsed * arbitrateTx.gasPrice;
+            const arbitrateReceipt = await arbitrateTx.wait();
+            const arbitrateGasUsed = arbitrateReceipt.gasUsed * arbitrateTx.gasPrice;
             
-            expect(await project.stage()).to.equal(4); // Closed
+            expect(await project.stage()).to.equal(4); // Appealable
+            expect(await project.originalDisputeResolution()).to.equal(arbiterPayoutPercent);
+            
+            // 4. Simulate appeal period ending without a DAO appeal, then finalize
+            const appealPeriod = await economy.appealPeriod();
+            await time.increase(appealPeriod + 1n);
+            await project.connect(user1).finalizeArbitration();
+
+            // 5. Verify final state (Closed)
+            expect(await project.stage()).to.equal(6); // Closed
             expect(await project.disputeResolution()).to.equal(arbiterPayoutPercent);
-            expect(await ethers.provider.getBalance(arbiter.address)).to.equal(arbiterBalanceBefore + NATIVE_ARBITRATION_FEE - gasUsed);
+            // MODIFIED: Account for gas spent by arbiter to submit their ruling.
+            expect(await ethers.provider.getBalance(arbiter.address)).to.equal(arbiterBalanceBefore - arbitrateGasUsed + NATIVE_ARBITRATION_FEE);
             
-            // 4. Contractor withdraws their partial payment
-            const contractorBalanceBefore = await ethers.provider.getBalance(contractor.address);
+            // 6. Contractor withdraws their partial payment
             const expectedContractorShare = (fundingAmount * BigInt(arbiterPayoutPercent)) / 100n;
             const platformFee = expectedContractorShare / 100n;
             const authorFee = (expectedContractorShare - platformFee) / 100n;
-            const expectedContractorPayout = expectedContractorShare - platformFee - authorFee;
-
-            await project.connect(contractor).withdrawAsContractor();
-            // Note: contractor balance check is tricky due to gas, but payout logic is what matters.
             
-            // 5. Contributor withdraws their remaining funds
+            await project.connect(contractor).withdrawAsContractor();
+            
+            // 7. Contributor withdraws their remaining funds
             const userBalanceBefore = await ethers.provider.getBalance(user1.address);
             const expectedUserRefund = fundingAmount - expectedContractorShare;
 
@@ -166,7 +173,7 @@ describe("Project Lifecycle under DAO Governance", function () {
 
             expect(await ethers.provider.getBalance(user1.address)).to.equal(userBalanceBefore + expectedUserRefund - withdrawGas);
             
-            // 6. Verify spendings were recorded in Economy
+            // 8. Verify spendings were recorded in Economy
             const userProfile = await economy.getUser(user1.address);
             const expectedExpenditure = fundingAmount - expectedUserRefund;
             expect(userProfile.spentTokens[0]).to.equal(NATIVE_CURRENCY);
@@ -212,7 +219,7 @@ describe("Project Lifecycle under DAO Governance", function () {
 
             // 3. Majority user (user2) also votes to release, pushing the vote over the 70% quorum.
             await project.connect(user2).voteToReleasePayment();
-            expect(await project.stage()).to.equal(4); // Now Closed
+            expect(await project.stage()).to.equal(6); // Now Closed
             expect(await project.totalVotesForRelease()).to.equal(amount1 + amount2);
         });
 

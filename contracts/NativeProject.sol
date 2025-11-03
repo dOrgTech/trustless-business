@@ -3,6 +3,8 @@ pragma solidity ^0.8.0;
 
 import "./IEconomy.sol";
 import "./IGovernedEconomy.sol";
+import "./IVotes.sol";
+import "./IGovernor.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 contract NativeProject is Initializable {
@@ -34,8 +36,13 @@ contract NativeProject is Initializable {
     address public daoTimelock;
     address public daoGovernor;
 
-    enum Stage { Open, Pending, Ongoing, Dispute, Closed }
+    enum Stage { Open, Pending, Ongoing, Dispute, Appealable, Appeal, Closed }
     Stage public stage;
+
+    uint public appealEnds;
+    uint public originalDisputeResolution;
+    string public originalRulingHash;
+    bool public arbiterHasRuled = false;
 
     struct ProjectDetails {
         string name;
@@ -61,6 +68,9 @@ contract NativeProject is Initializable {
     event ProjectClosed(address by);
     event ContractSigned(address contractor);
     event ArbitrationDecision(address arbiter, uint256 percent, string rulingHash);
+    event ArbitrationAppealed(address indexed appealer, uint256 indexed proposalId);
+    event ArbitrationFinalized(address indexed finalizer);
+    event DaoOverruled(address indexed timelock, uint256 percent, string rulingHash);
     event AuthorPaid(address author, uint256 amount);
     event VetoedByDao(address indexed timelock);
 
@@ -99,6 +109,10 @@ contract NativeProject is Initializable {
         }
     }
     
+    receive() external payable {
+        sendFunds();
+    }
+
     function getProjectDetails() public view returns (ProjectDetails memory) {
         return ProjectDetails({
             name: name,
@@ -228,21 +242,92 @@ contract NativeProject is Initializable {
     }
 
     function arbitrate(uint256 percent, string memory rulingHash) public {
-        require(stage == Stage.Dispute, "Arbitration can only occur if the project is in dispute.");
         require(msg.sender == arbiter, "Only the Arbiter can call this function");
+        require(stage == Stage.Dispute, "Arbitration can only occur if the project is in dispute.");
         require(percent <= 100, "Resolution needs to be a number between 0 and 100");
 
-        availableToContractor = (projectValue * percent) / 100;
+        originalDisputeResolution = percent;
+        originalRulingHash = rulingHash;
+        arbiterHasRuled = true;
+        stage = Stage.Appealable;
+        appealEnds = block.timestamp + IGovernedEconomy(address(economy)).appealPeriod();
+        
+        emit ArbitrationDecision(msg.sender, percent, rulingHash);
+    }
+
+    function appeal(uint256 proposalId, address[] calldata targets) external {
+        IGovernedEconomy governedEconomy = IGovernedEconomy(address(economy));
+        
+        require(
+            stage == Stage.Appealable ||
+            (stage == Stage.Dispute && block.timestamp > disputeStarted + governedEconomy.appealPeriod()),
+            "Appeal not allowed at this time"
+        );
+        
+        if (stage == Stage.Appealable) {
+            require(block.timestamp <= appealEnds, "Appeal initiation period has ended");
+        }
+        
+        address repTokenAddress = governedEconomy.repTokenAddress();
+        uint256 threshold = governedEconomy.projectThreshold();
+        uint256 votingPower = IVotes(repTokenAddress).getVotes(msg.sender);
+        require(votingPower >= threshold, "Insufficient voting power to appeal");
+
+        IGovernor.ProposalState propState = IGovernor(daoGovernor).state(proposalId);
+        require(
+            propState == IGovernor.ProposalState.Pending ||
+            propState == IGovernor.ProposalState.Active ||
+            propState == IGovernor.ProposalState.Succeeded ||
+            propState == IGovernor.ProposalState.Queued,
+            "Invalid proposal state"
+        );
+
+        require(targets.length > 0 && targets[0] == address(this), "Proposal does not target this project");
+
+        stage = Stage.Appeal;
+        appealEnds = block.timestamp + governedEconomy.appealPeriod();
+        emit ArbitrationAppealed(msg.sender, proposalId);
+    }
+    
+    function daoOverrule(uint256 percent, string memory rulingHash) public {
+        require(msg.sender == daoTimelock, "Only the DAO Timelock can overrule");
+        require(stage == Stage.Appeal, "DAO can only overrule during appeal stage");
+        require(block.timestamp <= appealEnds, "Appeal period has ended");
+        require(percent <= 100, "Resolution needs to be a number between 0 and 100");
+
+        _finalizeDispute(percent, rulingHash);
+        emit DaoOverruled(msg.sender, percent, rulingHash);
+    }
+
+    function finalizeArbitration() public {
+        require(
+            stage == Stage.Appealable || stage == Stage.Appeal,
+            "Project not in a finalizable stage"
+        );
+        require(block.timestamp > appealEnds, "Appeal/Finalization period has not ended yet");
+        
+        _finalizeDispute(originalDisputeResolution, originalRulingHash);
+        emit ArbitrationFinalized(msg.sender);
+    }
+
+    function _finalizeDispute(uint256 percent, string memory rulingHash) private {
         disputeResolution = percent;
         ruling_hash = rulingHash;
-        arbitrationFeePaidOut = true;
+        availableToContractor = (projectValue * percent) / 100;
         stage = Stage.Closed;
 
-        (bool sentArbiter, ) = payable(arbiter).call{value: arbitrationFee}("");
-        require(sentArbiter, "Failed to send arbitration fee to arbiter");
+        if (arbiterHasRuled) {
+            arbitrationFeePaidOut = true;
+            (bool sentArbiter, ) = payable(arbiter).call{value: arbitrationFee}("");
+            require(sentArbiter, "Failed to send arbitration fee to arbiter");
+            economy.updateEarnings(arbiter, arbitrationFee, economy.NATIVE_CURRENCY());
+        } else {
+            // ** THE FIX: Mark fee as paid out even when forfeited to prevent reclaims. **
+            arbitrationFeePaidOut = true;
+            (bool sentEconomy, ) = payable(address(economy)).call{value: arbitrationFee}("");
+            require(sentEconomy, "Failed to send forfeited fee to DAO");
+        }
         
-        economy.updateEarnings(arbiter, arbitrationFee, economy.NATIVE_CURRENCY());
-        emit ArbitrationDecision(msg.sender, percent, rulingHash);
         emit ProjectClosed(msg.sender);
     }
 
@@ -329,10 +414,8 @@ contract NativeProject is Initializable {
         require(msg.sender == daoTimelock, "Only the DAO Timelock can veto a project.");
         require(stage != Stage.Closed, "Cannot veto a closed project.");
         stage = Stage.Closed;
-        // FIXED: Sets disputeResolution to 0 to ensure 100% refund to backers.
-        disputeResolution = 0;
+        disputeResolution = 0; // Ensures 100% refund to backers.
         emit VetoedByDao(msg.sender);
     }
 }
-// NativeProject.sol```
-
+// NativeProject.sol
