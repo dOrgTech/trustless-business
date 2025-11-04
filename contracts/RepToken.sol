@@ -32,7 +32,6 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
     using Checkpoints for Checkpoints.Trace208;
 
     address public admin;
-    bool private adminSet;
     bool public constant isTransferable = false;
 
     address payable public immutable registryAddress;
@@ -80,7 +79,7 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
         require(_registryAddress != address(0) && _timelockAddress != address(0), "RepToken: Invalid addresses");
         registryAddress = _registryAddress;
         timelockAddress = _timelockAddress;
-        adminSet = false;
+        admin = msg.sender; // THE FIX: Set initial admin to the deployer (the RepTokenFactory)
 
         for (uint i = 0; i < initialMembers.length; i++) {
             _mint(initialMembers[i], initialAmounts[i]);
@@ -228,10 +227,11 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
     function CLOCK_MODE() public pure override returns (string memory) { return "mode=timestamp"; }
     function clock() public view override returns (uint48) { return uint48(block.timestamp); }
 
+    // MODIFIED: This is now a standard admin transfer function
     function setAdmin(address newAdmin) public override {
-        require(!adminSet, "Admin has already been set");
+        require(msg.sender == admin, "RepToken: Caller is not the admin");
+        require(newAdmin != address(0), "RepToken: New admin cannot be the zero address");
         admin = newAdmin;
-        adminSet = true;
     }
 
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {

@@ -4,8 +4,8 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./IEconomy.sol";
 import "./IGovernedEconomy.sol";
-import "./IVotes.sol";
-import "./IGovernor.sol";
+import "@openzeppelin/contracts/governance/utils/IVotes.sol";
+import "@openzeppelin/contracts/governance/IGovernor.sol";
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 contract ERC20Project is Initializable {

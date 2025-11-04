@@ -37,6 +37,7 @@ contract Registry is IERC721Receiver, ReentrancyGuard {
     event FundsEarmarked(bytes32 indexed purpose, uint256 amount);
     event EarmarkedFundsWithdrawn(bytes32 indexed purpose, uint256 amount);
     event EarmarkedFundsDisbursed(address indexed recipient, bytes32 indexed purpose, uint256 amount);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
 
      receive() external payable {
@@ -85,6 +86,14 @@ contract Registry is IERC721Receiver, ReentrancyGuard {
     }
 
     event RegistryUpdated(string  key, string  value);
+
+    // NEW FUNCTION: Transfer ownership to the Timelock after setup
+    function transferOwnership(address newOwner) external {
+        require(msg.sender == owner, "Only the current owner can transfer ownership");
+        require(newOwner != address(0), "New owner cannot be the zero address");
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
 
     function editRegistry(string memory key, string memory value) public _regedit {
         if (bytes(reg[key]).length == 0) {

@@ -82,11 +82,12 @@ describe("DAO-Governed Economy", function () {
         });
 
         it("should prevent non-Timelock addresses from setting parameters", async function () {
+            // THE FIX: Expect the correct revert reason "Protected"
             await expect(economy.connect(author).setPlatformFee(200))
-                .to.be.revertedWith("Only DAO Timelock can call");
+                .to.be.revertedWith("Protected");
             
             await expect(economy.connect(deployer).setNativeArbitrationFee(ethers.parseEther("1")))
-                .to.be.revertedWith("Only DAO Timelock can call");
+                .to.be.revertedWith("Protected");
         });
     });
 
