@@ -206,44 +206,44 @@ contract Economy is IEconomy {
     }
 
     function setPlatformFee(uint newFeeBps) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         platformFeeBps = newFeeBps;
         emit PlatformFeeSet(newFeeBps);
     }
 
     function setAuthorFee(uint newFeeBps) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         authorFeeBps = newFeeBps;
         emit AuthorFeeSet(newFeeBps);
     }
 
     function setNativeArbitrationFee(uint newFee) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         nativeArbitrationFee = newFee;
         emit NativeArbitrationFeeSet(newFee);
     }
 
     function setCoolingOffPeriod(uint newPeriod) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         coolingOffPeriod = newPeriod;
         emit CoolingOffPeriodSet(newPeriod);
     }
 
     function setBackersVoteQuorum(uint newQuorumBps) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         require(newQuorumBps >= 5000 && newQuorumBps <= 9900, "Quorum must be between 50% and 99%");
         backersVoteQuorumBps = newQuorumBps;
         emit BackersVoteQuorumSet(newQuorumBps);
     }
 
     function setProjectThreshold(uint newThreshold) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         projectThreshold = newThreshold;
         emit ProjectThresholdSet(newThreshold);
     }
 
     function setAppealPeriod(uint newPeriod) external {
-        require(msg.sender == timelockAddress, "Only DAO Timelock can call");
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         appealPeriod = newPeriod;
         emit AppealPeriodSet(newPeriod);
     }

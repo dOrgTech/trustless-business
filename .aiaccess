@@ -3,4 +3,3 @@ contracts/artifacts/
 contracts/.deps/
 contracts/.states/
 !test
-
