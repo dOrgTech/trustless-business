@@ -1,0 +1,282 @@
+// contracts/factories/StandardFactory.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "./InfrastructureFactory.sol";
+import "./DAOFactory.sol";
+import "./RepTokenFactory.sol";
+import "../Registry.sol";
+import "../RepToken.sol";
+import "../Dao.sol";
+import "@openzeppelin/contracts/governance/TimelockController.sol";
+
+/**
+ * @title StandardFactory
+ * @notice Deploys standard DAOs (without Economy) in a single transaction
+ * @dev Emits NewDaoCreated event for indexer compatibility
+ */
+contract StandardFactory {
+    InfrastructureFactory public immutable infrastructureFactory;
+    DAOFactory public immutable daoFactory;
+    RepTokenFactory public immutable repTokenFactory;
+
+    address[] public deployedDAOs;
+    address[] public deployedTokens;
+    address[] public deployedTimelocks;
+    address[] public deployedRegistries;
+
+    // Event compatible with the indexer's expectations
+    event NewDaoCreated(
+        address indexed dao,
+        address token,
+        address[] initialMembers,
+        uint256[] initialAmounts,
+        string name,
+        string symbol,
+        string description,
+        uint256 executionDelay,
+        address registry,
+        string[] keys,
+        string[] values
+    );
+
+    // New struct with string parameter (for apps that send "true"/"false" as strings)
+    struct DaoParams {
+        string name;
+        string symbol;
+        string description;
+        uint8 decimals;
+        uint256 executionDelay;
+        address[] initialMembers;
+        uint256[] initialAmounts;
+        string[] keys;
+        string[] values;
+        string transferrableStr;
+    }
+
+    // Legacy struct with bool parameter (for backward compatibility with cached ABIs)
+    struct DaoParamsLegacy {
+        string name;
+        string symbol;
+        string description;
+        uint8 decimals;
+        uint256 executionDelay;
+        address[] initialMembers;
+        uint256[] initialAmounts;
+        string[] keys;
+        string[] values;
+        bool transferrable;
+    }
+
+    constructor(
+        address _infrastructureFactory,
+        address _daoFactory,
+        address _repTokenFactory
+    ) {
+        infrastructureFactory = InfrastructureFactory(_infrastructureFactory);
+        daoFactory = DAOFactory(_daoFactory);
+        repTokenFactory = RepTokenFactory(_repTokenFactory);
+    }
+
+    function getNumberOfDAOs() public view returns (uint) {
+        return deployedDAOs.length;
+    }
+
+    /**
+     * @notice Deploys a complete DAO suite in a single transaction
+     * @param params DAO configuration parameters
+     * @dev Governance params (votingDelay, votingPeriod, proposalThreshold, quorumFraction)
+     *      are appended to the end of initialAmounts array
+     */
+    function deployDAOwithToken(DaoParams memory params) public payable {
+        require(
+            params.initialAmounts.length >= params.initialMembers.length + 4,
+            "StandardFactory: Insufficient settings in initialAmounts"
+        );
+        require(
+            params.initialMembers.length > 0,
+            "StandardFactory: At least one initial member required"
+        );
+
+        // Extract governance params from end of initialAmounts array
+        uint48 votingDelay = uint48(params.initialAmounts[params.initialAmounts.length - 4]);
+        uint32 votingPeriod = uint32(params.initialAmounts[params.initialAmounts.length - 3]);
+        uint256 proposalThreshold = params.initialAmounts[params.initialAmounts.length - 2];
+        uint8 quorumFraction = uint8(params.initialAmounts[params.initialAmounts.length - 1]);
+
+        // Convert string "true"/"false" to boolean
+        // Only "true" (case-sensitive) will result in transferrable tokens
+        bool transferrable = keccak256(bytes(params.transferrableStr)) == keccak256(bytes("true"));
+
+        // Extract token amounts (without governance params)
+        uint256 membersCount = params.initialMembers.length;
+        uint256[] memory tokenAmounts = new uint256[](membersCount);
+        for (uint i = 0; i < membersCount; i++) {
+            tokenAmounts[i] = params.initialAmounts[i];
+        }
+
+        // 1. Deploy timelock (with this factory as temporary admin)
+        address timelockAddr = infrastructureFactory.deployTimelock(
+            address(this),
+            params.executionDelay
+        );
+
+        // 2. Deploy registry (with this factory as temporary owner)
+        address registryAddr = infrastructureFactory.deployRegistry(
+            address(this),
+            address(this)
+        );
+
+        // 3. Deploy RepToken (governance token)
+        address tokenAddr = repTokenFactory.deployRepToken(
+            params.name,
+            params.symbol,
+            payable(registryAddr),
+            address(this), // Temporary admin
+            params.initialMembers,
+            tokenAmounts,
+            transferrable
+        );
+
+        // 4. Deploy DAO
+        uint[] memory daoSettings = new uint[](4);
+        daoSettings[0] = votingDelay;
+        daoSettings[1] = votingPeriod;
+        daoSettings[2] = proposalThreshold;
+        daoSettings[3] = quorumFraction;
+
+        address daoAddr = daoFactory.deployDAO(
+            tokenAddr,
+            timelockAddr,
+            params.name,
+            daoSettings
+        );
+
+        // 5. Finalize setup and transfer ownership
+        _finalizeDeployment(
+            daoAddr,
+            tokenAddr,
+            timelockAddr,
+            payable(registryAddr),
+            params.keys,
+            params.values
+        );
+
+        // 6. Emit event for indexer
+        emit NewDaoCreated(
+            daoAddr,
+            tokenAddr,
+            params.initialMembers,
+            params.initialAmounts,
+            params.name,
+            params.symbol,
+            params.description,
+            params.executionDelay,
+            registryAddr,
+            params.keys,
+            params.values
+        );
+    }
+
+    /**
+     * @notice Backwards-compatible function for legacy web apps
+     * @dev ONLY accepts string for transferrable parameter to avoid JavaScript Boolean("false") === true bug
+     *      Web apps send "true"/"false" as strings, which we parse correctly here
+     */
+    function deployDAOwithToken(
+        string memory name,
+        string memory symbol,
+        string memory description,
+        uint8 decimals,
+        uint256 executionDelay,
+        address[] memory initialMembers,
+        uint256[] memory initialAmounts,
+        string[] memory keys,
+        string[] memory values,
+        string memory transferrableStr
+    ) public payable {
+        // Pass the string directly to the struct
+        // The main function will handle the conversion to bool
+        DaoParams memory params = DaoParams({
+            name: name,
+            symbol: symbol,
+            description: description,
+            decimals: decimals,
+            executionDelay: executionDelay,
+            initialMembers: initialMembers,
+            initialAmounts: initialAmounts,
+            keys: keys,
+            values: values,
+            transferrableStr: transferrableStr
+        });
+        deployDAOwithToken(params);
+    }
+
+    /**
+     * @notice Backwards-compatible function for apps with cached ABIs that use bool
+     * @dev Accepts legacy DaoParamsLegacy struct and converts bool to string
+     */
+    function deployDAOwithToken(DaoParamsLegacy memory legacyParams) public payable {
+        // Convert bool to string "true" or "false"
+        string memory transferrableStr = legacyParams.transferrable ? "true" : "false";
+
+        // Convert to new params format
+        DaoParams memory params = DaoParams({
+            name: legacyParams.name,
+            symbol: legacyParams.symbol,
+            description: legacyParams.description,
+            decimals: legacyParams.decimals,
+            executionDelay: legacyParams.executionDelay,
+            initialMembers: legacyParams.initialMembers,
+            initialAmounts: legacyParams.initialAmounts,
+            keys: legacyParams.keys,
+            values: legacyParams.values,
+            transferrableStr: transferrableStr
+        });
+
+        deployDAOwithToken(params);
+    }
+
+    function _finalizeDeployment(
+        address dao,
+        address token,
+        address timelock,
+        address payable registry,
+        string[] memory keys,
+        string[] memory values
+    ) internal {
+        // Store deployed addresses
+        deployedDAOs.push(dao);
+        deployedTokens.push(token);
+        deployedTimelocks.push(timelock);
+        deployedRegistries.push(registry);
+
+        // Set up contracts
+        RepToken repToken = RepToken(token);
+        Registry registryContract = Registry(registry);
+        TimelockController timelockController = TimelockController(payable(timelock));
+
+        // Set registry's jurisdiction address
+        registryContract.setJurisdictionAddress(token);
+
+        // Transfer token admin to timelock
+        repToken.setAdmin(timelock);
+
+        // Transfer registry ownership to timelock
+        registryContract.transferOwnership(timelock);
+
+        // Grant roles to DAO
+        timelockController.grantRole(timelockController.PROPOSER_ROLE(), dao);
+        timelockController.grantRole(timelockController.EXECUTOR_ROLE(), address(0)); // Anyone can execute
+
+        // Revoke factory's admin role
+        timelockController.revokeRole(timelockController.DEFAULT_ADMIN_ROLE(), address(this));
+
+        // Set initial registry values if provided
+        if (keys.length > 0) {
+            require(keys.length == values.length, "StandardFactory: Keys and values length mismatch");
+            registryContract.batchEditRegistry(keys, values);
+        }
+    }
+}
+// StandardFactory.sol

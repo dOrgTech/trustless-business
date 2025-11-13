@@ -1,6 +1,6 @@
 require("@nomicfoundation/hardhat-toolbox");
 
-const { INFURA_API_KEY, SEPOLIA_PRIVATE_KEY } = require("./config");
+const { INFURA_API_KEY, SEPOLIA_PRIVATE_KEY, PRIVATE_KEY } = require("./config");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -31,7 +31,7 @@ module.exports = {
     et: {
       url: `https://node.ghostnet.etherlink.com`,
       chainId: 128123,
-      accounts: [`0x${SEPOLIA_PRIVATE_KEY}`], // Ensure 0x is added here
+      accounts: [`0x${PRIVATE_KEY}`], // Ensure 0x is added here
     },
   }
 };
