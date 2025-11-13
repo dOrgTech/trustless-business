@@ -32,7 +32,7 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
     using Checkpoints for Checkpoints.Trace208;
 
     address public admin;
-    bool public constant isTransferable = false;
+    bool public immutable isTransferable;
 
     address payable public immutable registryAddress;
     address public immutable timelockAddress;
@@ -71,7 +71,8 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
         address payable _registryAddress,
         address _timelockAddress,
         address[] memory initialMembers,
-        uint256[] memory initialAmounts
+        uint256[] memory initialAmounts,
+        bool _isTransferable
     )
         ERC20(name, symbol)
         ERC20Permit(name)
@@ -79,6 +80,7 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
         require(_registryAddress != address(0) && _timelockAddress != address(0), "RepToken: Invalid addresses");
         registryAddress = _registryAddress;
         timelockAddress = _timelockAddress;
+        isTransferable = _isTransferable;
         admin = msg.sender; // THE FIX: Set initial admin to the deployer (the RepTokenFactory)
 
         for (uint i = 0; i < initialMembers.length; i++) {
@@ -246,7 +248,19 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
     }
     
     function nonces(address owner) public view override(ERC20Permit, Nonces) returns (uint256) { return super.nonces(owner); }
-    function transfer(address, uint256) public pure override returns (bool) { revert("RepToken: Reputation is non-transferable"); }
-    function transferFrom(address, address, uint256) public pure override returns (bool) { revert("RepToken: Reputation is non-transferable"); }
+
+    function transfer(address to, uint256 value) public override returns (bool) {
+        if (!isTransferable) {
+            revert("RepToken: Reputation is non-transferable");
+        }
+        return super.transfer(to, value);
+    }
+
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        if (!isTransferable) {
+            revert("RepToken: Reputation is non-transferable");
+        }
+        return super.transferFrom(from, to, value);
+    }
 }
 // RepToken.sol
