@@ -378,4 +378,251 @@ describe("Standard DAO Governance", function () {
             expect(await token.totalSupply()).to.equal(ethers.parseEther("130")); // 150 initial - 20 burned
         });
     });
+
+    describe("Treasury Operations - Native ETH", function () {
+        it("should transfer native ETH from treasury via proposal", async function () {
+            // Setup: Send ETH to the timelock (treasury)
+            const timelockAddress = await timelock.getAddress();
+            await member1.sendTransaction({
+                to: timelockAddress,
+                value: ethers.parseEther("10")
+            });
+
+            const timelockBalance = await ethers.provider.getBalance(timelockAddress);
+            expect(timelockBalance).to.equal(ethers.parseEther("10"));
+
+            // Delegate and create proposal
+            await token.connect(member1).delegate(member1.address);
+            await time.increase(1);
+
+            // Propose to transfer 5 ETH to recipient
+            const transferAmount = ethers.parseEther("5");
+            const targets = [recipient.address];
+            const values = [transferAmount];
+            const calldatas = ["0x"]; // Empty calldata for ETH transfer
+            const description = "Transfer 5 ETH to recipient";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            // Vote
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+
+            // Queue
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+
+            // Execute
+            await time.increase(61);
+            const recipientBalanceBefore = await ethers.provider.getBalance(recipient.address);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+            const recipientBalanceAfter = await ethers.provider.getBalance(recipient.address);
+
+            // Verify
+            expect(recipientBalanceAfter - recipientBalanceBefore).to.equal(transferAmount);
+            expect(await ethers.provider.getBalance(timelockAddress)).to.equal(ethers.parseEther("5"));
+        });
+    });
+
+    describe("Treasury Operations - ERC20", function () {
+        let testToken;
+
+        beforeEach(async function () {
+            // Deploy a test ERC20 token
+            const TestERC20 = await ethers.getContractFactory("TestERC20");
+            testToken = await TestERC20.deploy("Test Token", "TEST", 18, ethers.parseEther("1000"));
+
+            // Send tokens to the timelock
+            const timelockAddress = await timelock.getAddress();
+            await testToken.transfer(timelockAddress, ethers.parseEther("100"));
+        });
+
+        it("should transfer ERC20 tokens from treasury via proposal", async function () {
+            // Delegate
+            await token.connect(member1).delegate(member1.address);
+            await time.increase(1);
+
+            // Create proposal to transfer ERC20
+            const transferAmount = ethers.parseEther("50");
+            const targets = [await testToken.getAddress()];
+            const values = [0];
+            const calldatas = [testToken.interface.encodeFunctionData("transfer", [recipient.address, transferAmount])];
+            const description = "Transfer 50 TEST tokens to recipient";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            // Vote
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+
+            // Queue
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+
+            // Execute
+            await time.increase(61);
+            const recipientBalanceBefore = await testToken.balanceOf(recipient.address);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+            const recipientBalanceAfter = await testToken.balanceOf(recipient.address);
+
+            // Verify
+            expect(recipientBalanceAfter - recipientBalanceBefore).to.equal(transferAmount);
+            expect(await testToken.balanceOf(await timelock.getAddress())).to.equal(ethers.parseEther("50"));
+        });
+    });
+
+    describe("DAO Settings Updates", function () {
+        beforeEach(async function () {
+            await token.connect(member1).delegate(member1.address);
+            await time.increase(1);
+        });
+
+        it("should update voting period via proposal", async function () {
+            const currentVotingPeriod = await dao.votingPeriod();
+            const newVotingPeriod = 300; // 5 minutes in seconds (changed from 2 minutes)
+
+            // Create proposal to update voting period
+            const targets = [await dao.getAddress()];
+            const values = [0];
+            const calldatas = [dao.interface.encodeFunctionData("setVotingPeriod", [newVotingPeriod])];
+            const description = "Update voting period to 5 minutes";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            // Vote, queue, execute
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+            await time.increase(61);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+
+            // Verify
+            expect(await dao.votingPeriod()).to.equal(newVotingPeriod);
+            expect(await dao.votingPeriod()).to.not.equal(currentVotingPeriod);
+        });
+
+        it("should update voting delay via proposal", async function () {
+            const newVotingDelay = 120; // 2 minutes in seconds
+
+            const targets = [await dao.getAddress()];
+            const values = [0];
+            const calldatas = [dao.interface.encodeFunctionData("setVotingDelay", [newVotingDelay])];
+            const description = "Update voting delay to 2 minutes";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+            await time.increase(61);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+
+            expect(await dao.votingDelay()).to.equal(newVotingDelay);
+        });
+
+        it("should update proposal threshold via proposal", async function () {
+            const newThreshold = ethers.parseEther("10");
+
+            const targets = [await dao.getAddress()];
+            const values = [0];
+            const calldatas = [dao.interface.encodeFunctionData("setProposalThreshold", [newThreshold])];
+            const description = "Update proposal threshold to 10 tokens";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+            await time.increase(61);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+
+            expect(await dao.proposalThreshold()).to.equal(newThreshold);
+        });
+
+        it("should update quorum via proposal", async function () {
+            const newQuorum = 10; // 10%
+
+            const targets = [await dao.getAddress()];
+            const values = [0];
+            const calldatas = [dao.interface.encodeFunctionData("updateQuorumNumerator", [newQuorum])];
+            const description = "Update quorum to 10%";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+            await time.increase(61);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+
+            expect(await dao.quorumNumerator()).to.equal(newQuorum);
+        });
+
+        it("should update timelock minimum delay via proposal", async function () {
+            const newMinDelay = 300; // 5 minutes
+
+            const timelockAddress = await timelock.getAddress();
+            const targets = [timelockAddress];
+            const values = [0];
+            const calldatas = [timelock.interface.encodeFunctionData("updateDelay", [newMinDelay])];
+            const description = "Update timelock delay to 5 minutes";
+
+            const proposeTx = await dao.connect(member1).propose(targets, values, calldatas, description);
+            const proposeReceipt = await proposeTx.wait();
+            const proposeEvent = proposeReceipt.logs.find(log => {
+                try { return dao.interface.parseLog(log).name === "ProposalCreated"; }
+                catch { return false; }
+            });
+            const proposalId = dao.interface.parseLog(proposeEvent).args.proposalId;
+
+            await time.increase(61);
+            await dao.connect(member1).castVote(proposalId, 1);
+            await time.increase(121);
+            await dao.connect(member1).queue(targets, values, calldatas, ethers.id(description));
+            await time.increase(61);
+            await dao.connect(member1).execute(targets, values, calldatas, ethers.id(description));
+
+            expect(await timelock.getMinDelay()).to.equal(newMinDelay);
+        });
+    });
 });

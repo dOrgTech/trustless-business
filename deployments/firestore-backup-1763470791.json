@@ -1,0 +1,39 @@
+{
+  "timestamp": "2025-11-18T14:59:51.278288",
+  "networks": {
+    "Etherlink-Testnet": {
+      "nativeCurrency": "Tezos",
+      "wrapper_t": "0xFBC66A23Fe3dc851817eFDa6A039b599707E0E3b",
+      "repTokenFactory": "0x2B5D7DcbA86E089ecA7D406013C8E5bCb45cd65A",
+      "rpc": "https://node.ghostnet.etherlink.com",
+      "tokenFactory_t": "0xD09c6B655F715ef198886CC0a7A3bFBd962DbE37",
+      "timelockFactory": "0x460A4602E2A167Fb0fD3ed6bF79D53e054F60bf1",
+      "blockExplorer": "https://testnet.explorer.etherlink.com",
+      "tokenFactory": "0x284d5E4BbfE61f476691771bB8f07Fc2eeC5A720",
+      "wrapper_trustless": "0xFB3dE5d465264557464950a9E824eBf1acc33394",
+      "infrastructureFactory": "0x804Ab2A2a0496246A3B75419fC774447F40230ad",
+      "daoFactory": "0x8389e45B96433474B7BFE7924F5C909965426261",
+      "wrapper_jurisdiction": "0xc558cD4e3Fa91C51141ab0E6Cd77b5Fe94B0B002",
+      "symbol": "XTZ",
+      "chainId": 128123,
+      "lastSyncedBlock": 22769000,
+      "wrapper_w": "0x422657c7620Dde17Ca9439e25863d0011767d574",
+      "wrapper": "0xc558cD4e3Fa91C51141ab0E6Cd77b5Fe94B0B002"
+    },
+    "Etherlink": {
+      "wrapper_jurisdiction": "0x3269C596673a7c259B837DF2DD74e05Cbf9D3a35",
+      "nativeCurrency": "Tezos",
+      "wrapper_t": "0x8Ce309413178FD7e85EE52A2D4567C5425a07e0E",
+      "daoFactory": "0xd30455f4F9a22375E4852Aa6D5DAe281107a71ad",
+      "rpc": "https://node.mainnet.etherlink.com",
+      "symbol": "XTZ",
+      "chainId": 42793,
+      "blockExplorer": "https://explorer.etherlink.com",
+      "tokenFactory": "0x0F622d7e0Ed971231ED21F94E246dD19e379aDC4",
+      "timelockFactory": "0x96eF8D2c5A1966cCcbD6c701089811327Bfc3f27",
+      "wrapper_w": "0x022D1a8257Ea9145c9C71Ab45F09a396167eabD3",
+      "wrapper": "0x735B6Dcc911951bE4Bf10F2657d2971e24f27416",
+      "wrapper_trustless": "0x14EBCe277Aec8Aa34eDaae24A09FDa2E0B2e0aFF"
+    }
+  }
+}
