@@ -142,6 +142,7 @@ contract StandardFactoryWrapped {
         );
 
         // 6. Emit event for indexer
+        // Convert votingDelay and votingPeriod from minutes to seconds for indexer consistency
         emit DaoWrappedDeploymentInfo(
             daoAddr,
             tokenAddr,
@@ -152,8 +153,8 @@ contract StandardFactoryWrapped {
             params.description,
             quorumFraction,
             params.executionDelay,
-            votingDelay,
-            votingPeriod,
+            uint48(votingDelay * 60),
+            uint32(votingPeriod * 60),
             proposalThreshold
         );
     }
