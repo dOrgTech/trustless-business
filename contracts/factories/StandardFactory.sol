@@ -54,19 +54,8 @@ contract StandardFactory {
         string transferrableStr;
     }
 
-    // Legacy struct with bool parameter (for backward compatibility with cached ABIs)
-    struct DaoParamsLegacy {
-        string name;
-        string symbol;
-        string description;
-        uint8 decimals;
-        uint256 executionDelay;
-        address[] initialMembers;
-        uint256[] initialAmounts;
-        string[] keys;
-        string[] values;
-        bool transferrable;
-    }
+    // Legacy struct removed to avoid function overloading ambiguity
+    // Use DaoParams with string transferrableStr instead
 
     constructor(
         address _infrastructureFactory,
@@ -212,30 +201,7 @@ contract StandardFactory {
         deployDAOwithToken(params);
     }
 
-    /**
-     * @notice Backwards-compatible function for apps with cached ABIs that use bool
-     * @dev Accepts legacy DaoParamsLegacy struct and converts bool to string
-     */
-    function deployDAOwithToken(DaoParamsLegacy memory legacyParams) public payable {
-        // Convert bool to string "true" or "false"
-        string memory transferrableStr = legacyParams.transferrable ? "true" : "false";
-
-        // Convert to new params format
-        DaoParams memory params = DaoParams({
-            name: legacyParams.name,
-            symbol: legacyParams.symbol,
-            description: legacyParams.description,
-            decimals: legacyParams.decimals,
-            executionDelay: legacyParams.executionDelay,
-            initialMembers: legacyParams.initialMembers,
-            initialAmounts: legacyParams.initialAmounts,
-            keys: legacyParams.keys,
-            values: legacyParams.values,
-            transferrableStr: transferrableStr
-        });
-
-        deployDAOwithToken(params);
-    }
+    // Legacy function removed to avoid ambiguity - use deployDAOwithToken(DaoParams) with string transferrableStr
 
     function _finalizeDeployment(
         address dao,

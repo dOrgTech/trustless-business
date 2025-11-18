@@ -33,5 +33,10 @@ module.exports = {
       chainId: 128123,
       accounts: [`0x${PRIVATE_KEY}`], // Ensure 0x is added here
     },
+    etm: {
+      url: `https://node.mainnet.etherlink.com`,
+      chainId: 42793,
+      accounts: [`0x${PRIVATE_KEY}`], // Ensure 0x is added here
+    },
   }
 };
