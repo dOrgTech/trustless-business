@@ -16,8 +16,8 @@ async function main() {
   console.log("  (Using deployer account for all test operations on testnet)");
   console.log();
 
-  // Load deployed factory address
-  const factoryAddress = "0x5CE75b733c530E94Ae1786FB51Ee269B6e4dA940";
+  // Load deployed factory address (UPDATED: new deployment with voting period fix)
+  const factoryAddress = "0x422657c7620Dde17Ca9439e25863d0011767d574";
   console.log("StandardFactoryWrapped address:", factoryAddress);
   console.log();
 
@@ -53,8 +53,8 @@ async function main() {
     executionDelay: 60, // 1 minute
     underlyingTokenAddress: underlyingTokenAddr,
     governanceSettings: [
-      60,    // votingDelay (1 min in seconds)
-      300,   // votingPeriod (5 min in seconds)
+      1,     // votingDelay: 1 minute (passed in MINUTES per deployment guide)
+      2,     // votingPeriod: 2 minutes (passed in MINUTES per deployment guide)
       0,     // proposalThreshold (0 for testing)
       4      // quorumFraction (4%)
     ],

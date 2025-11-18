@@ -40,7 +40,7 @@ contract StandardFactory {
         string[] values
     );
 
-    // New struct with string parameter (for apps that send "true"/"false" as strings)
+    // Struct matching DAO_DEPLOYMENT_GUIDE (no transferrableStr - this factory always creates non-transferable tokens)
     struct DaoParams {
         string name;
         string symbol;
@@ -51,7 +51,6 @@ contract StandardFactory {
         uint256[] initialAmounts;
         string[] keys;
         string[] values;
-        string transferrableStr;
     }
 
     // Legacy struct removed to avoid function overloading ambiguity
@@ -93,9 +92,9 @@ contract StandardFactory {
         uint256 proposalThreshold = params.initialAmounts[params.initialAmounts.length - 2];
         uint8 quorumFraction = uint8(params.initialAmounts[params.initialAmounts.length - 1]);
 
-        // Convert string "true"/"false" to boolean
-        // Only "true" (case-sensitive) will result in transferrable tokens
-        bool transferrable = keccak256(bytes(params.transferrableStr)) == keccak256(bytes("true"));
+        // StandardFactory always creates NON-TRANSFERABLE tokens
+        // For transferable tokens, use StandardFactoryTransferable (wrapper_t)
+        bool transferrable = false;
 
         // Extract token amounts (without governance params)
         uint256 membersCount = params.initialMembers.length;
@@ -169,8 +168,7 @@ contract StandardFactory {
 
     /**
      * @notice Backwards-compatible function for legacy web apps
-     * @dev ONLY accepts string for transferrable parameter to avoid JavaScript Boolean("false") === true bug
-     *      Web apps send "true"/"false" as strings, which we parse correctly here
+     * @dev Accepts individual parameters and wraps them into DaoParams struct
      */
     function deployDAOwithToken(
         string memory name,
@@ -181,11 +179,8 @@ contract StandardFactory {
         address[] memory initialMembers,
         uint256[] memory initialAmounts,
         string[] memory keys,
-        string[] memory values,
-        string memory transferrableStr
+        string[] memory values
     ) public payable {
-        // Pass the string directly to the struct
-        // The main function will handle the conversion to bool
         DaoParams memory params = DaoParams({
             name: name,
             symbol: symbol,
@@ -195,13 +190,10 @@ contract StandardFactory {
             initialMembers: initialMembers,
             initialAmounts: initialAmounts,
             keys: keys,
-            values: values,
-            transferrableStr: transferrableStr
+            values: values
         });
         deployDAOwithToken(params);
     }
-
-    // Legacy function removed to avoid ambiguity - use deployDAOwithToken(DaoParams) with string transferrableStr
 
     function _finalizeDeployment(
         address dao,
