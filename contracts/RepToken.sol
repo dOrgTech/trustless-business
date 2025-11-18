@@ -236,6 +236,17 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
         admin = newAdmin;
     }
 
+    // Mint and burn functions for governance proposals (controlled by admin/timelock)
+    function mint(address to, uint256 amount) public {
+        require(msg.sender == admin, "RepToken: Only admin can mint");
+        _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) public {
+        require(msg.sender == admin, "RepToken: Only admin can burn");
+        _burn(from, amount);
+    }
+
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Votes) {
         super._update(from, to, value);
         uint48 timestamp = clock();
