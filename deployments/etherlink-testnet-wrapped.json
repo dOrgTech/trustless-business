@@ -2,11 +2,11 @@
   "network": "Etherlink-Testnet",
   "chainId": 128123,
   "deployer": "0x06E5b15Bc39f921e1503073dBb8A5dA2Fc6220E9",
-  "timestamp": "2025-11-13T13:00:32.671Z",
+  "timestamp": "2025-11-18T07:54:40.611Z",
   "contracts": {
     "infrastructureFactory": "0x727eC93332AE854a23AedbEd2c0585Da89BcA125",
     "daoFactory": "0x5963490f9d4A0aD0a1b0f6a3ff2436a1fEF6A6b9",
-    "wrappedRepTokenFactory": "0x6D5144CC4fF4e3B06d67D424c677F02C71478f36",
-    "standardFactoryWrapped": "0x5CE75b733c530E94Ae1786FB51Ee269B6e4dA940"
+    "wrappedRepTokenFactory": "0x1C7D028d5EE2AF68Bf407c05A105fad1295aC283",
+    "standardFactoryWrapped": "0x422657c7620Dde17Ca9439e25863d0011767d574"
   }
 }
