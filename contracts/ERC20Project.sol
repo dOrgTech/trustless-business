@@ -32,8 +32,7 @@ contract ERC20Project is Initializable {
     bool public fundsReleased;
     uint public arbitrationFee;
     bool public arbitrationFeePaidOut = false;
-    bool public contractorWithdrawnArbitrationFee = false;
-    bool public authorWithdrawnArbitrationFee = false;
+    bool public contractorReclaimedStake = false;
     
     address public daoTimelock;
     address public daoGovernor;
@@ -85,7 +84,6 @@ contract ERC20Project is Initializable {
         address _arbiter,
         string memory _termsHash,
         string memory _repo,
-        uint _arbitrationFee,
         address _daoTimelock,
         address _daoGovernor
     ) public initializer {
@@ -98,11 +96,12 @@ contract ERC20Project is Initializable {
         arbiter = _arbiter;
         termsHash = _termsHash;
         repo = _repo;
-        arbitrationFee = _arbitrationFee;
         ruling_hash = "";
 
         daoTimelock = _daoTimelock;
         daoGovernor = _daoGovernor;
+
+        // arbitrationFee is now calculated at signing time based on projectValue
 
         economy.registerProjectRoles(address(this), _author, _contractor, _arbiter);
 
@@ -180,7 +179,12 @@ contract ERC20Project is Initializable {
         require(stage == Stage.Pending, "The project can only be signed while in `pending` stage.");
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
-        
+
+        // Calculate arbitration fee based on project value at signing time
+        uint feeBps = IGovernedEconomy(address(economy)).arbitrationFeeBps();
+        arbitrationFee = (projectValue * feeBps) / 10000;
+
+        // Contractor must stake their half of the arbitration fee
         require(token.transferFrom(msg.sender, address(this), arbitrationFee / 2), "Must stake half the arbitration fee to sign.");
 
         stage = Stage.Ongoing;
@@ -331,19 +335,26 @@ contract ERC20Project is Initializable {
     function _finalizeDispute(uint256 percent, string memory rulingHash) private {
         disputeResolution = percent;
         ruling_hash = rulingHash;
-        availableToContractor = (projectValue * percent) / 100;
         stage = Stage.Closed;
-        
+        arbitrationFeePaidOut = true;
+
+        // Arbiter fee: half from contractor's stake, half from project funds
+        uint contractorStake = arbitrationFee / 2;
+        uint contributorShare = arbitrationFee - contractorStake; // Handles odd amounts
+
+        // Deduct contributor share from project value before calculating contractor's share
+        uint projectValueAfterArbFee = projectValue - contributorShare;
+        availableToContractor = (projectValueAfterArbFee * percent) / 100;
+
         if (arbiterHasRuled) {
-            arbitrationFeePaidOut = true;
+            // Pay arbiter the full fee
             require(token.transfer(arbiter, arbitrationFee), "Failed to send arbitration fee to arbiter");
             economy.updateEarnings(arbiter, arbitrationFee, address(token));
         } else {
-            // ** THE FIX: Mark fee as paid out even when forfeited to prevent reclaims. **
-            arbitrationFeePaidOut = true;
+            // Arbiter didn't rule - forfeit fee to DAO
             require(token.transfer(address(economy), arbitrationFee), "Failed to send forfeited fee to DAO");
         }
-        
+
         emit ProjectClosed(msg.sender);
     }
     
@@ -385,15 +396,29 @@ contract ERC20Project is Initializable {
         uint256 contributorAmount = contributors[msg.sender];
         require(contributorAmount > 0, "No contributions to withdraw.");
         contributors[msg.sender] = 0;
-        
-        uint256 exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
-        uint256 expenditure = contributorAmount - exitAmount;
+
+        uint256 exitAmount;
+        uint256 expenditure;
+
+        if (arbitrationFeePaidOut) {
+            // Dispute occurred - half of arbitration fee came from project funds
+            // Calculate contributor's share of that fee proportionally
+            uint contributorArbFeeShare = (arbitrationFee / 2 * contributorAmount) / projectValue;
+            uint remainingContribution = contributorAmount - contributorArbFeeShare;
+            exitAmount = (remainingContribution * (100 - disputeResolution)) / 100;
+            expenditure = contributorAmount - exitAmount;
+        } else {
+            // No dispute - standard calculation
+            exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
+            expenditure = contributorAmount - exitAmount;
+        }
+
         projectValue -= exitAmount;
-        
+
         if (expenditure > 0) {
             economy.updateSpendings(msg.sender, expenditure, address(token));
         }
-        
+
         if (exitAmount > 0) {
             require(token.transfer(msg.sender, exitAmount), "Failed to send tokens");
         }
@@ -401,31 +426,15 @@ contract ERC20Project is Initializable {
         emit ContributorWithdrawn(msg.sender, exitAmount);
     }
     
-    function reclaimArbitrationFee() public {
-        require(
-            stage == Stage.Closed,
-            "Arbitration fee can be reclaimed once the project is closed."
-        );
-        require(
-            !arbitrationFeePaidOut,
-            "The fee has been paid out to the Arbiter (because there was a dispute)."
-        );
-        require(
-            msg.sender == author || msg.sender == contractor,
-            "Arbitration fee can only be returned to the parties."
-        );
-        
-        uint amountToWithdraw = arbitrationFee / 2;
+    function reclaimArbitrationStake() public {
+        require(stage == Stage.Closed, "Stake can only be reclaimed once the project is closed.");
+        require(arbitrationFeePaidOut == false, "Stake was used to pay the arbiter.");
+        require(msg.sender == contractor, "Only the contractor can reclaim their stake.");
+        require(contractorReclaimedStake == false, "You have already reclaimed your stake.");
 
-        if (msg.sender == author) {
-            require(!authorWithdrawnArbitrationFee, "You have already claimed this back.");
-            authorWithdrawnArbitrationFee = true;
-            require(token.transfer(author, amountToWithdraw), "Failed to withdraw.");
-        } else {
-            require(!contractorWithdrawnArbitrationFee, "You have already claimed this back.");
-            contractorWithdrawnArbitrationFee = true;
-            require(token.transfer(contractor, amountToWithdraw), "Failed to withdraw.");
-        }
+        contractorReclaimedStake = true;
+        uint stakeAmount = arbitrationFee / 2;
+        require(token.transfer(contractor, stakeAmount), "Failed to withdraw stake.");
     }
     
     function daoVeto() public {
@@ -441,15 +450,16 @@ contract ERC20Project is Initializable {
         IERC20 sweepToken = IERC20(tokenAddress);
         uint256 totalBalance = sweepToken.balanceOf(address(this));
         uint256 trackedBalance = (tokenAddress == address(token)) ? projectValue : 0;
-        
+
         if (tokenAddress == address(token)) {
-            if (stage == Stage.Pending || stage == Stage.Ongoing || stage == Stage.Dispute || stage == Stage.Appealable || stage == Stage.Appeal) {
+            // Only contractor stakes half the arbitration fee (after signing)
+            if (stage == Stage.Ongoing || stage == Stage.Dispute || stage == Stage.Appealable || stage == Stage.Appeal) {
                  if (!arbitrationFeePaidOut) {
-                    trackedBalance += arbitrationFee;
+                    trackedBalance += arbitrationFee / 2; // Only contractor's stake
                  }
             }
         }
-        
+
         if (totalBalance > trackedBalance) {
             uint256 orphanedAmount = totalBalance - trackedBalance;
             require(sweepToken.transfer(address(economy), orphanedAmount), "Failed to sweep tokens");

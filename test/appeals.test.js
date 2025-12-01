@@ -6,48 +6,48 @@ describe("Appeals and Advanced Fund Handling", function () {
     let economy, nativeProjectImpl, erc20ProjectImpl, testToken, mockRepToken, mockGovernor;
     let deployer, timelock, registry, author, contractor, arbiter, user1, daoMember;
 
-    const NATIVE_ARBITRATION_FEE = ethers.parseEther("0.1");
-    const TOKEN_ARBITRATION_FEE = ethers.parseEther("100");
+    const ARBITRATION_FEE_BPS = 500; // 5%
     const PROJECT_THRESHOLD = ethers.parseEther("1000");
 
     // Helper to set up a project in the Dispute stage
     async function setupDisputedProject() {
         // Create an ERC20 project
-        const economyAddr = await economy.getAddress();
-        await testToken.connect(author).approve(economyAddr, TOKEN_ARBITRATION_FEE / 2n);
         const tx = await economy.connect(author).createERC20Project(
             "Appeal Test", contractor.address, arbiter.address, "t", "r", "d",
-            await testToken.getAddress(), TOKEN_ARBITRATION_FEE
+            await testToken.getAddress()
         );
         const receipt = await tx.wait();
         const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
         const project = await ethers.getContractAt("ERC20Project", projectAddress);
 
-        // Fund and start it
+        // Fund the project
         const fundingAmount = ethers.parseEther("5000");
         await testToken.connect(user1).approve(projectAddress, fundingAmount);
         await project.connect(user1).sendFunds(fundingAmount);
-        await testToken.connect(contractor).approve(projectAddress, TOKEN_ARBITRATION_FEE / 2n);
+
+        // Contractor stakes half the arbitration fee and signs
+        const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+        await testToken.connect(contractor).approve(projectAddress, arbitrationFee / 2n);
         await project.connect(contractor).signContract();
 
         // Dispute it
         await project.connect(user1).voteToDispute();
         expect(await project.stage()).to.equal(3); // Dispute
 
-        return project;
+        return { project, fundingAmount, arbitrationFee };
     }
 
     beforeEach(async function () {
         [deployer, timelock, registry, author, contractor, arbiter, user1, daoMember] = await ethers.getSigners();
-        
+
         // Deploy implementations and core contracts
         const NativeProjectImpl = await ethers.getContractFactory("NativeProject");
         nativeProjectImpl = await NativeProjectImpl.deploy();
         const ERC20ProjectImpl = await ethers.getContractFactory("ERC20Project");
         erc20ProjectImpl = await ERC20ProjectImpl.deploy();
         const Economy = await ethers.getContractFactory("Economy");
-        economy = await Economy.deploy();
-        
+        economy = await Economy.deploy(ARBITRATION_FEE_BPS);
+
         // Deploy mocks
         const TestToken = await ethers.getContractFactory("TestToken");
         testToken = await TestToken.deploy();
@@ -59,9 +59,8 @@ describe("Appeals and Advanced Fund Handling", function () {
         // Link contracts
         await economy.connect(deployer).setImplementations(await nativeProjectImpl.getAddress(), await erc20ProjectImpl.getAddress());
         await economy.connect(deployer).setDaoAddresses(timelock.address, registry.address, await mockGovernor.getAddress(), await mockRepToken.getAddress());
-        
+
         // Set DAO parameters
-        await economy.connect(timelock).setNativeArbitrationFee(NATIVE_ARBITRATION_FEE);
         await economy.connect(timelock).setProjectThreshold(PROJECT_THRESHOLD);
 
         // Mint reputation to the author so they can create projects
@@ -74,10 +73,13 @@ describe("Appeals and Advanced Fund Handling", function () {
     });
 
     describe("Full Appeal Lifecycle", function() {
-        let project;
+        let project, fundingAmount, arbitrationFee;
 
         beforeEach(async function() {
-            project = await setupDisputedProject();
+            const result = await setupDisputedProject();
+            project = result.project;
+            fundingAmount = result.fundingAmount;
+            arbitrationFee = result.arbitrationFee;
         });
 
         it("should allow a valid DAO member to appeal and the DAO to overrule", async function() {
@@ -101,9 +103,9 @@ describe("Appeals and Advanced Fund Handling", function () {
             // 5. Verify final state
             expect(await project.disputeResolution()).to.equal(daoRuling);
             expect(await project.ruling_hash()).to.equal("dao_ruling");
-            
+
             // 6. Verify arbiter was still paid because they ruled
-            expect(await testToken.balanceOf(arbiter.address)).to.equal(TOKEN_ARBITRATION_FEE);
+            expect(await testToken.balanceOf(arbiter.address)).to.equal(arbitrationFee);
         });
 
         it("should finalize the arbiter's ruling if the appeal initiation period expires", async function() {
@@ -134,7 +136,7 @@ describe("Appeals and Advanced Fund Handling", function () {
 
             const appealPeriod = await economy.appealPeriod();
             await time.increase(appealPeriod + 1n);
-            
+
             // DAO tries to overrule too late
             await expect(project.connect(timelock).daoOverrule(10, "too_late"))
                 .to.be.revertedWith("Appeal period has ended");
@@ -147,7 +149,7 @@ describe("Appeals and Advanced Fund Handling", function () {
 
         it("should prevent appeals from members with insufficient voting power", async function() {
             await project.connect(arbiter).arbitrate(50, "ruling");
-            
+
             // Mint just under the required threshold
             await mockRepToken.mint(daoMember.address, PROJECT_THRESHOLD - 1n);
             await mockGovernor.setProposalState(1);
@@ -157,12 +159,15 @@ describe("Appeals and Advanced Fund Handling", function () {
         });
     });
 
-    // NEW: Test suite for the inactive arbiter scenario
+    // Test suite for the inactive arbiter scenario
     describe("Arbiter Inactivity & Escalation", function() {
-        let project;
+        let project, fundingAmount, arbitrationFee;
 
         beforeEach(async function() {
-            project = await setupDisputedProject();
+            const result = await setupDisputedProject();
+            project = result.project;
+            fundingAmount = result.fundingAmount;
+            arbitrationFee = result.arbitrationFee;
         });
 
         it("should allow the DAO to escalate a dispute if the arbiter is inactive", async function() {
@@ -188,15 +193,15 @@ describe("Appeals and Advanced Fund Handling", function () {
             // 6. Verify the consequences of arbiter inactivity
             // Arbiter should NOT be paid
             expect(await testToken.balanceOf(arbiter.address)).to.equal(0);
-            
+
             // The forfeited fee should be in the Economy contract
             const economyBalance = await testToken.balanceOf(await economy.getAddress());
             // Economy balance contains platform fees and now the forfeited fee
-            expect(economyBalance).to.equal(TOKEN_ARBITRATION_FEE);
-            
-            // Author and Contractor should NOT be able to reclaim their fee
-            await expect(project.connect(author).reclaimArbitrationFee())
-                .to.be.revertedWith("The fee has been paid out to the Arbiter (because there was a dispute).");
+            expect(economyBalance).to.equal(arbitrationFee);
+
+            // Contractor should NOT be able to reclaim their stake (it was used for the fee)
+            await expect(project.connect(contractor).reclaimArbitrationStake())
+                .to.be.revertedWith("Stake was used to pay the arbiter.");
         });
 
         it("should prevent the DAO from escalating a dispute within the arbiter's exclusive window", async function() {
@@ -221,26 +226,26 @@ describe("Appeals and Advanced Fund Handling", function () {
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
             const project = await ethers.getContractAt("NativeProject", projectAddress);
-            
+
             const fundingAmount = ethers.parseEther("2.5");
             const userBalanceBefore = await ethers.provider.getBalance(user1.address);
-            
+
             const sendTx = await user1.sendTransaction({
                 to: projectAddress,
                 value: fundingAmount
             });
             await sendTx.wait();
-            
+
             const sendReceipt = await ethers.provider.getTransactionReceipt(sendTx.hash);
             const gasUsed = sendReceipt.gasUsed * sendTx.gasPrice;
-            
+
             expect(await project.projectValue()).to.equal(fundingAmount);
             expect(await project.contributors(user1.address)).to.equal(fundingAmount);
             expect(await ethers.provider.getBalance(user1.address)).to.equal(userBalanceBefore - fundingAmount - gasUsed);
         });
 
         it("should allow the DAO to sweep orphaned ERC20 tokens", async function() {
-            const project = await setupDisputedProject();
+            const { project, fundingAmount, arbitrationFee } = await setupDisputedProject();
             const projectAddress = await project.getAddress();
             const orphanedAmount = ethers.parseEther("123");
 
@@ -249,10 +254,11 @@ describe("Appeals and Advanced Fund Handling", function () {
 
             const projectValue = await project.projectValue();
             const totalBalance = await testToken.balanceOf(projectAddress);
-            const totalStaked = TOKEN_ARBITRATION_FEE;
-            
+            // Only contractor's half of the arbitration fee is staked
+            const contractorStake = arbitrationFee / 2n;
+
             expect(totalBalance).to.be.gt(projectValue);
-            expect(totalBalance).to.equal(projectValue + totalStaked + orphanedAmount);
+            expect(totalBalance).to.equal(projectValue + contractorStake + orphanedAmount);
 
             // A non-timelock account cannot sweep
             await expect(project.connect(author).sweepOrphanedTokens(await testToken.getAddress()))
@@ -265,9 +271,9 @@ describe("Appeals and Advanced Fund Handling", function () {
 
             // Verify balances and state
             expect(economyBalanceAfter).to.equal(economyBalanceBefore + orphanedAmount);
-            expect(await testToken.balanceOf(projectAddress)).to.equal(projectValue + totalStaked);
+            expect(await testToken.balanceOf(projectAddress)).to.equal(projectValue + contractorStake);
             expect(await project.projectValue()).to.equal(projectValue); // Unchanged
         });
     });
 });
-// appeals.test.js```
+// appeals.test.js

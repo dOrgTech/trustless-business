@@ -8,7 +8,7 @@ describe("RepToken and Economy Integration", function () {
     let mockProjectSigner; // To be used as a valid caller
 
     const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-    const TOKEN_ARBITRATION_FEE = ethers.parseEther("100");
+    const ARBITRATION_FEE_BPS = 500; // 5%
 
     // This helper now uses the pre-configured mockProjectSigner
     async function updateEconomyState(updates) {
@@ -26,16 +26,16 @@ describe("RepToken and Economy Integration", function () {
 
         const RegistryFactory = await ethers.getContractFactory("Registry");
         registry = await RegistryFactory.deploy(timelock.address, deployer.address);
-        
+
         const ERC20ProjectImpl = await ethers.getContractFactory("ERC20Project");
         const erc20ProjectImpl = await ERC20ProjectImpl.deploy();
         const EconomyFactory = await ethers.getContractFactory("Economy");
-        economy = await EconomyFactory.deploy();
+        economy = await EconomyFactory.deploy(ARBITRATION_FEE_BPS);
         
         await economy.connect(deployer).setImplementations(ethers.ZeroAddress, await erc20ProjectImpl.getAddress());
         
         const RepTokenFactory = await ethers.getContractFactory("RepToken");
-        repToken = await RepTokenFactory.deploy("Jurisdiction Token", "JUR", await registry.getAddress(), timelock.address, [], []);
+        repToken = await RepTokenFactory.deploy("Jurisdiction Token", "JUR", await registry.getAddress(), timelock.address, [], [], false);
         const TestTokenFactory = await ethers.getContractFactory("TestToken");
         testToken = await TestTokenFactory.deploy();
 
@@ -47,8 +47,8 @@ describe("RepToken and Economy Integration", function () {
         await economy.connect(deployer).setDaoAddresses(timelock.address, await registry.getAddress(), deployer.address, await repToken.getAddress());
         
         const economyAddr = await economy.getAddress();
-        await testToken.connect(author).approve(economyAddr, TOKEN_ARBITRATION_FEE / 2n);
-        const tx = await economy.connect(author).createERC20Project("Mock Project", contractor.address, deployer.address, "t", "r", "d", await testToken.getAddress(), TOKEN_ARBITRATION_FEE);
+        // Create project without arbitration fee parameter (it's now percentage-based)
+        const tx = await economy.connect(author).createERC20Project("Mock Project", contractor.address, deployer.address, "t", "r", "d", await testToken.getAddress());
         const receipt = await tx.wait();
         const mockProjectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
         

@@ -22,7 +22,7 @@ contract Economy is IEconomy {
     address public constant override NATIVE_CURRENCY = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     // --- STATE: DAO-Controlled Parameters ---
-    uint public nativeArbitrationFee;
+    uint public arbitrationFeeBps;  // Unified arbitration fee in basis points (e.g., 500 = 5%)
     uint public platformFeeBps;
     uint public authorFeeBps;
     uint public coolingOffPeriod;
@@ -59,24 +59,46 @@ contract Economy is IEconomy {
         address[] projectsAsArbiter;
     }
 
+    struct EconomyConfig {
+        // DAO Governance Addresses
+        address timelockAddress;
+        address registryAddress;
+        address governorAddress;
+        address repTokenAddress;
+        // DAO-Controlled Parameters
+        uint arbitrationFeeBps;
+        uint platformFeeBps;
+        uint authorFeeBps;
+        uint coolingOffPeriod;
+        uint backersVoteQuorumBps;
+        uint projectThreshold;
+        uint appealPeriod;
+        // Implementation addresses
+        address nativeProjectImplementation;
+        address erc20ProjectImplementation;
+        // Stats
+        uint numberOfProjects;
+    }
+
     // --- EVENTS ---
     event InboundValue();
     event NewProject(address indexed contractAddress, string projectName, address contractor, address arbiter, string termsHash, string repo, string description, address token);
     event DaoAddressesSet(address timellock, address registry, address governor, address repToken);
     event PlatformFeeSet(uint newFeeBps);
     event AuthorFeeSet(uint newFeeBps);
-    event NativeArbitrationFeeSet(uint newFee);
+    event ArbitrationFeeSet(uint newFeeBps);
     event CoolingOffPeriodSet(uint newPeriod);
     event BackersVoteQuorumSet(uint newQuorumBps);
     event ProjectThresholdSet(uint newThreshold);
     event AppealPeriodSet(uint newPeriod); // NEW
 
-    constructor() {
+    constructor(uint _arbitrationFeeBps) {
+        arbitrationFeeBps = _arbitrationFeeBps;
         platformFeeBps = 100; // 1%
         authorFeeBps = 100;   // 1%
         coolingOffPeriod = 2 minutes;
         backersVoteQuorumBps = 7000; // 70%
-        appealPeriod = 7 days; // NEW: Default appeal period
+        appealPeriod = 7 days;
     }
 
     function setImplementations(address _native, address _erc20) external {
@@ -89,6 +111,25 @@ contract Economy is IEconomy {
     receive() external payable { emit InboundValue(); }
 
     function getNumberOfProjects() public view returns (uint) { return deployedProjects.length; }
+
+    function getConfig() public view returns (EconomyConfig memory) {
+        return EconomyConfig({
+            timelockAddress: timelockAddress,
+            registryAddress: registryAddress,
+            governorAddress: governorAddress,
+            repTokenAddress: repTokenAddress,
+            arbitrationFeeBps: arbitrationFeeBps,
+            platformFeeBps: platformFeeBps,
+            authorFeeBps: authorFeeBps,
+            coolingOffPeriod: coolingOffPeriod,
+            backersVoteQuorumBps: backersVoteQuorumBps,
+            projectThreshold: projectThreshold,
+            appealPeriod: appealPeriod,
+            nativeProjectImplementation: nativeProjectImplementation,
+            erc20ProjectImplementation: erc20ProjectImplementation,
+            numberOfProjects: deployedProjects.length
+        });
+    }
 
     function getUser(address userAddress) public view returns (UserProfile memory) {
         address[] memory earnedTokenList = _earnedTokens[userAddress];
@@ -145,27 +186,21 @@ contract Economy is IEconomy {
         string memory termsHash,
         string memory repo,
         string memory description,
-        address tokenAddress,
-        uint tokenArbitrationFee
+        address tokenAddress
     ) public {
         require(erc20ProjectImplementation != address(0), "ERC20 implementation not set.");
         require(repTokenAddress != address(0) && IRepToken(repTokenAddress).balanceOf(msg.sender) >= projectThreshold, "Insufficient reputation to create a project");
 
         address clone = Clones.clone(erc20ProjectImplementation);
-        
+
         deployedProjects.push(clone);
         isProjectContract[clone] = true;
 
         ERC20Project(clone).initialize(
             payable(address(this)), tokenAddress, name, msg.sender, contractor, arbiter,
-            termsHash, repo, tokenArbitrationFee, timelockAddress, governorAddress
+            termsHash, repo, timelockAddress, governorAddress
         );
 
-        if (contractor != address(0) && arbiter != address(0)) {
-            uint feeStake = tokenArbitrationFee / 2;
-            IERC20(tokenAddress).transferFrom(msg.sender, clone, feeStake);
-        }
-        
         emit NewProject(clone, name, contractor, arbiter, termsHash, repo, description, tokenAddress);
     }
 
@@ -217,10 +252,10 @@ contract Economy is IEconomy {
         emit AuthorFeeSet(newFeeBps);
     }
 
-    function setNativeArbitrationFee(uint newFee) external {
+    function setArbitrationFee(uint newFeeBps) external {
         require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
-        nativeArbitrationFee = newFee;
-        emit NativeArbitrationFeeSet(newFee);
+        arbitrationFeeBps = newFeeBps;
+        emit ArbitrationFeeSet(newFeeBps);
     }
 
     function setCoolingOffPeriod(uint newPeriod) external {

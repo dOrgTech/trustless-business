@@ -7,8 +7,7 @@ describe("DAO-Governed Economy", function () {
 
     // Constants
     const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-    const INITIAL_NATIVE_ARBITRATION_FEE = ethers.parseEther("0.1");
-    const TOKEN_ARBITRATION_FEE = ethers.parseEther("100");
+    const ARBITRATION_FEE_BPS = 500; // 5%
 
     beforeEach(async function () {
         [deployer, timelock, registry, governor, author, contractor, arbiter, user1] = await ethers.getSigners();
@@ -16,20 +15,20 @@ describe("DAO-Governed Economy", function () {
         // 1. Deploy Implementations
         const NativeProjectImpl = await ethers.getContractFactory("NativeProject");
         nativeProjectImpl = await NativeProjectImpl.deploy();
-        
+
         const ERC20ProjectImpl = await ethers.getContractFactory("ERC20Project");
         erc20ProjectImpl = await ERC20ProjectImpl.deploy();
 
-        // 2. Deploy Economy Contract
+        // 2. Deploy Economy Contract with arbitration fee in basis points
         const Economy = await ethers.getContractFactory("Economy");
-        economy = await Economy.deploy();
+        economy = await Economy.deploy(ARBITRATION_FEE_BPS);
 
         // 3. Deploy Mock ERC20 and Rep Tokens
         const TestToken = await ethers.getContractFactory("TestToken");
         testToken = await TestToken.deploy();
         const MockRepToken = await ethers.getContractFactory("MockRepToken");
         mockRepToken = await MockRepToken.deploy();
-        
+
         // 4. Link everything together
         await economy.connect(deployer).setImplementations(
             await nativeProjectImpl.getAddress(),
@@ -41,11 +40,8 @@ describe("DAO-Governed Economy", function () {
             timelock.address,
             registry.address,
             governor.address,
-            await mockRepToken.getAddress() // Use the deployed mock contract
+            await mockRepToken.getAddress()
         );
-
-        // Set an initial native arbitration fee for project creation
-        await economy.connect(timelock).setNativeArbitrationFee(INITIAL_NATIVE_ARBITRATION_FEE);
 
         // Distribute test tokens
         await testToken.connect(deployer).transfer(author.address, ethers.parseEther("10000"));
@@ -82,20 +78,20 @@ describe("DAO-Governed Economy", function () {
         });
 
         it("should prevent non-Timelock addresses from setting parameters", async function () {
-            // THE FIX: Expect the correct revert reason "Protected"
             await expect(economy.connect(author).setPlatformFee(200))
                 .to.be.revertedWith("Protected");
-            
-            await expect(economy.connect(deployer).setNativeArbitrationFee(ethers.parseEther("1")))
+
+            await expect(economy.connect(deployer).setArbitrationFee(1000))
                 .to.be.revertedWith("Protected");
         });
     });
 
     describe("Project Creation & DAO Awareness", function() {
         it("should inject DAO addresses into new NativeProject clones", async function() {
+            // Author creates project with initial funding (no arbitration stake needed)
             const tx = await economy.connect(author).createProject(
                 "Native Test", contractor.address, arbiter.address, "terms", "repo", "desc",
-                { value: INITIAL_NATIVE_ARBITRATION_FEE / 2n }
+                { value: ethers.parseEther("1") }  // Initial funding, not arbitration stake
             );
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
@@ -106,62 +102,64 @@ describe("DAO-Governed Economy", function () {
         });
 
         it("should correctly read a DAO-governed parameter (quorum)", async function() {
-             // 1. DAO sets a custom quorum
+            // 1. DAO sets a custom quorum
             await economy.connect(timelock).setBackersVoteQuorum(8500); // 85% quorum
 
-            // 2. Create and fund project
+            // 2. Create project (author can optionally fund)
             const tx = await economy.connect(author).createProject(
-                "Quorum Test", contractor.address, arbiter.address, "terms", "repo", "desc",
-                { value: INITIAL_NATIVE_ARBITRATION_FEE / 2n }
+                "Quorum Test", contractor.address, arbiter.address, "terms", "repo", "desc"
             );
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
             const project = await ethers.getContractAt("NativeProject", projectAddress);
-            
-            await project.connect(user1).sendFunds({ value: ethers.parseEther("10") });
-            await project.connect(contractor).signContract({ value: INITIAL_NATIVE_ARBITRATION_FEE / 2n });
 
-            // 3. Vote to release payment. With 100% of the vote, it should pass the 85% threshold.
+            // 3. Fund project
+            const fundingAmount = ethers.parseEther("10");
+            await project.connect(user1).sendFunds({ value: fundingAmount });
+
+            // 4. Contractor signs and stakes half the arbitration fee (5% of 10 ETH = 0.5 ETH, half = 0.25 ETH)
+            const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await project.connect(contractor).signContract({ value: arbitrationFee / 2n });
+
+            // 5. Vote to release payment. With 100% of the vote, it should pass the 85% threshold.
             await project.connect(user1).voteToReleasePayment();
 
-            // 4. Verify stage changed to Closed
-            // MODIFIED: The 'Closed' stage enum is now 6.
+            // 6. Verify stage changed to Closed
             expect(await project.stage()).to.equal(6); // 6 = Closed
         });
     });
 
     describe("DAO Veto Functionality", function() {
         it("should allow the DAO Timelock to veto an ongoing project", async function() {
-            // 1. Create and fund a project
-            const economyAddr = await economy.getAddress();
-            await testToken.connect(author).approve(economyAddr, TOKEN_ARBITRATION_FEE / 2n);
+            // 1. Create project (no arbitration fee parameter needed)
             const tx = await economy.connect(author).createERC20Project(
                 "Veto Test", contractor.address, arbiter.address, "terms", "repo", "desc",
-                await testToken.getAddress(), TOKEN_ARBITRATION_FEE
+                await testToken.getAddress()
             );
-             const receipt = await tx.wait();
+            const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
             const project = await ethers.getContractAt("ERC20Project", projectAddress);
 
+            // 2. Fund project
             const fundingAmount = ethers.parseEther("500");
             await testToken.connect(user1).approve(projectAddress, fundingAmount);
             await project.connect(user1).sendFunds(fundingAmount);
-            
-            await testToken.connect(contractor).approve(projectAddress, TOKEN_ARBITRATION_FEE / 2n);
+
+            // 3. Contractor signs and stakes half the arbitration fee
+            const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await testToken.connect(contractor).approve(projectAddress, arbitrationFee / 2n);
             await project.connect(contractor).signContract();
             expect(await project.stage()).to.equal(2); // Ongoing
 
-            // 2. Veto the project
+            // 4. Veto the project
             await expect(project.connect(timelock).daoVeto())
                 .to.emit(project, "VetoedByDao").withArgs(timelock.address);
-            
-            // 3. Verify state
-            // MODIFIED: The 'Closed' stage enum is now 6.
+
+            // 5. Verify state
             expect(await project.stage()).to.equal(6); // Closed
-            
             expect(await project.disputeResolution()).to.equal(0);
 
-            // 4. Verify user can get a full refund
+            // 6. Verify user can get a full refund
             const userBalanceBefore = await testToken.balanceOf(user1.address);
             await project.connect(user1).withdrawAsContributor();
             const userBalanceAfter = await testToken.balanceOf(user1.address);
@@ -170,8 +168,7 @@ describe("DAO-Governed Economy", function () {
 
         it("should prevent non-Timelock addresses from vetoing", async function() {
             const tx = await economy.connect(author).createProject(
-                "No Veto Test", contractor.address, arbiter.address, "terms", "repo", "desc",
-                { value: INITIAL_NATIVE_ARBITRATION_FEE / 2n }
+                "No Veto Test", contractor.address, arbiter.address, "terms", "repo", "desc"
             );
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
@@ -187,26 +184,26 @@ describe("DAO-Governed Economy", function () {
             // --- Phase 1: Native Project ---
             const nativeFunding = ethers.parseEther("10");
             const nativeTx = await economy.connect(author).createProject(
-                "Native Accounting", contractor.address, arbiter.address, "t", "r", "d",
-                { value: INITIAL_NATIVE_ARBITRATION_FEE / 2n }
+                "Native Accounting", contractor.address, arbiter.address, "t", "r", "d"
             );
             const nativeReceipt = await nativeTx.wait();
             const nativeProjectAddr = nativeReceipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
             const nativeProject = await ethers.getContractAt("NativeProject", nativeProjectAddr);
 
             await nativeProject.connect(user1).sendFunds({ value: nativeFunding });
-            await nativeProject.connect(contractor).signContract({ value: INITIAL_NATIVE_ARBITRATION_FEE / 2n });
+
+            // Contractor stakes half the arbitration fee
+            const nativeArbFee = (nativeFunding * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await nativeProject.connect(contractor).signContract({ value: nativeArbFee / 2n });
             await nativeProject.connect(user1).voteToReleasePayment();
             await nativeProject.connect(contractor).withdrawAsContractor();
 
             // --- Phase 2: ERC20 Project ---
             const tokenFunding = ethers.parseEther("1000");
-            const economyAddr = await economy.getAddress();
             const tokenAddr = await testToken.getAddress();
-            await testToken.connect(author).approve(economyAddr, TOKEN_ARBITRATION_FEE / 2n);
             const erc20Tx = await economy.connect(author).createERC20Project(
                 "ERC20 Accounting", contractor.address, arbiter.address, "t", "r", "d",
-                tokenAddr, TOKEN_ARBITRATION_FEE
+                tokenAddr
             );
             const erc20Receipt = await erc20Tx.wait();
             const erc20ProjectAddr = erc20Receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
@@ -214,17 +211,20 @@ describe("DAO-Governed Economy", function () {
 
             await testToken.connect(user1).approve(erc20ProjectAddr, tokenFunding);
             await erc20Project.connect(user1).sendFunds(tokenFunding);
-            await testToken.connect(contractor).approve(erc20ProjectAddr, TOKEN_ARBITRATION_FEE / 2n);
+
+            // Contractor stakes half the arbitration fee
+            const tokenArbFee = (tokenFunding * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await testToken.connect(contractor).approve(erc20ProjectAddr, tokenArbFee / 2n);
             await erc20Project.connect(contractor).signContract();
             await erc20Project.connect(user1).voteToReleasePayment();
             await erc20Project.connect(contractor).withdrawAsContractor();
 
             // --- Phase 3: Verification ---
             const contractorProfile = await economy.getUser(contractor.address);
-            
+
             const platformFeeBps = await economy.platformFeeBps();
             const authorFeeBps = await economy.authorFeeBps();
-            
+
             const nativePlatformFee = (nativeFunding * platformFeeBps) / 10000n;
             const nativeAuthorFee = ((nativeFunding - nativePlatformFee) * authorFeeBps) / 10000n;
             const expectedNativeEarning = nativeFunding - nativePlatformFee - nativeAuthorFee;
