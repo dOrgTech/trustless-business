@@ -7,8 +7,8 @@ import "../Economy.sol";
 contract EconomyFactory {
     address[] public deployedEconomies;
 
-    function deployEconomy() external returns (address) {
-        Economy economy = new Economy();
+    function deployEconomy(uint arbitrationFeeBps) external returns (address) {
+        Economy economy = new Economy(arbitrationFeeBps);
         deployedEconomies.push(address(economy));
         return address(economy);
     }

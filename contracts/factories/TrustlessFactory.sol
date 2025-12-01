@@ -1,4 +1,4 @@
-// contracts/factories/TrustlessFactory.sol
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
@@ -37,6 +37,7 @@ contract TrustlessFactory is Ownable {
 
     // RENAMED STRUCT for clarity
     struct EconomyParams {
+        uint arbitrationFeeBps;
         uint initialPlatformFeeBps;
         uint initialAuthorFeeBps;
         uint initialCoolingOffPeriod;
@@ -44,6 +45,7 @@ contract TrustlessFactory is Ownable {
         uint initialProjectThreshold;
         uint initialAppealPeriod;
     }
+
 
     InfrastructureFactory public immutable infrastructureFactory;
     DAOFactory public immutable daoFactory;
@@ -91,8 +93,8 @@ contract TrustlessFactory is Ownable {
         repTokenFactory = RepTokenFactory(_repTokenFactory);
     }
 
-    function deployInfrastructure(uint48 timelockDelayInMinutes) external onlyOwner {
-        address economyAddr = economyFactory.deployEconomy();
+    function deployInfrastructure(uint48 timelockDelayInMinutes, uint arbitrationFeeBps) external onlyOwner {
+        address economyAddr = economyFactory.deployEconomy(arbitrationFeeBps);
         address timelockAddr = infrastructureFactory.deployTimelock(address(this), timelockDelayInMinutes * 1 minutes);
         address registryAddr = infrastructureFactory.deployRegistry(address(this), address(0));
 
@@ -131,8 +133,12 @@ contract TrustlessFactory is Ownable {
     // REFACTORED FUNCTION SIGNATURE
     function configureAndFinalize(
         AddressParams calldata _addressParams,
-        EconomyParams calldata _economyParams
+        EconomyParams calldata _economyParams,
+        string[] calldata _registryKeys,
+        string[] calldata _registryValues
     ) external onlyOwner {
+        require(_registryKeys.length == _registryValues.length, "Registry keys/values length mismatch");
+
         address economyAddr = _addressParams.contractAddresses[0];
         address registryAddr = _addressParams.contractAddresses[1];
         address timelockAddr = _addressParams.contractAddresses[2];
@@ -151,9 +157,14 @@ contract TrustlessFactory is Ownable {
         economy.setBackersVoteQuorum(_economyParams.initialBackersQuorumBps);
         economy.setProjectThreshold(_economyParams.initialProjectThreshold);
         economy.setAppealPeriod(_economyParams.initialAppealPeriod);
-        
+
         repToken.setEconomyAddress(economyAddr);
         registry.setJurisdictionAddress(repTokenAddr);
+
+        // Initialize registry with provided key-value pairs
+        if (_registryKeys.length > 0) {
+            registry.batchEditRegistry(_registryKeys, _registryValues);
+        }
 
         economy.setDaoAddresses(timelockAddr, registryAddr, daoAddr, repTokenAddr);
         repToken.setAdmin(timelockAddr);
@@ -170,8 +181,6 @@ contract TrustlessFactory is Ownable {
 
         // Emit NewDaoCreated event for indexer compatibility
         if (currentDeployment.isSet) {
-            string[] memory emptyKeys;
-            string[] memory emptyValues;
             emit NewDaoCreated(
                 daoAddr,
                 repTokenAddr,
@@ -182,8 +191,8 @@ contract TrustlessFactory is Ownable {
                 "Economy DAO", // Description for economy DAOs
                 currentDeployment.timelockDelay,
                 registryAddr,
-                emptyKeys,
-                emptyValues
+                _registryKeys,
+                _registryValues
             );
             // Clear deployment data
             delete currentDeployment;

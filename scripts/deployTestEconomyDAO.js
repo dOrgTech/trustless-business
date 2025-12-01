@@ -126,7 +126,29 @@ async function main() {
     initialAppealPeriod: 604800        // 7 days in seconds
   };
 
-  const tx3 = await trustlessFactory.configureAndFinalize(addressParams, economyParams);
+  // Initial registry entries for token parity
+  // Native currency (0xEeee...eeee) parity: 1:1 (1e18 = 1 token earns 1 reputation)
+  const NATIVE_CURRENCY_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  const registryKeys = [
+    `jurisdiction.parity.${NATIVE_CURRENCY_ADDRESS}`,
+    "benefits.claim.gracePeriod"
+  ];
+  const registryValues = [
+    "1000000000000000000",  // 1e18 = 1:1 parity for native currency
+    "2592000"              // 30 days grace period for benefits claims
+  ];
+
+  console.log("   Setting initial registry entries:");
+  for (let i = 0; i < registryKeys.length; i++) {
+    console.log(`     ${registryKeys[i]}: ${registryValues[i]}`);
+  }
+
+  const tx3 = await trustlessFactory.configureAndFinalize(
+    addressParams,
+    economyParams,
+    registryKeys,
+    registryValues
+  );
   const receipt3 = await tx3.wait();
 
   console.log("   Configuration complete!");
@@ -194,7 +216,8 @@ async function main() {
         initialBackersQuorumBps: economyParams.initialBackersQuorumBps,
         initialProjectThreshold: economyParams.initialProjectThreshold.toString(),
         initialAppealPeriod: economyParams.initialAppealPeriod
-      }
+      },
+      registry: Object.fromEntries(registryKeys.map((k, i) => [k, registryValues[i]]))
     }
   };
 

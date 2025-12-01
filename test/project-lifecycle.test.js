@@ -7,10 +7,9 @@ describe("Project Lifecycle under DAO Governance", function () {
     let deployer, timelock, registry, governor, author, contractor, arbiter, user1, user2;
 
     const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
-    const NATIVE_ARBITRATION_FEE = ethers.parseEther("0.1");
-    const TOKEN_ARBITRATION_FEE = ethers.parseEther("100");
+    const ARBITRATION_FEE_BPS = 500; // 5%
 
-    // Helper function to create a new project, handling both native and ERC20 cases
+    // Helper function to create a new project
     async function createProject(isNative, parties = {}) {
         const _author = parties.author || author;
         const _contractor = parties.contractor || contractor;
@@ -18,18 +17,15 @@ describe("Project Lifecycle under DAO Governance", function () {
 
         if (isNative) {
             const tx = await economy.connect(_author).createProject(
-                "Native Project", _contractor.address, _arbiter.address, "terms", "repo", "desc",
-                { value: NATIVE_ARBITRATION_FEE / 2n }
+                "Native Project", _contractor.address, _arbiter.address, "terms", "repo", "desc"
             );
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
             return ethers.getContractAt("NativeProject", projectAddress);
         } else {
-            const economyAddr = await economy.getAddress();
-            await testToken.connect(_author).approve(economyAddr, TOKEN_ARBITRATION_FEE / 2n);
             const tx = await economy.connect(_author).createERC20Project(
                 "ERC20 Project", _contractor.address, _arbiter.address, "terms", "repo", "desc",
-                await testToken.getAddress(), TOKEN_ARBITRATION_FEE
+                await testToken.getAddress()
             );
             const receipt = await tx.wait();
             const projectAddress = receipt.logs.find(log => log.eventName === 'NewProject').args.contractAddress;
@@ -39,22 +35,21 @@ describe("Project Lifecycle under DAO Governance", function () {
 
     beforeEach(async function () {
         [deployer, timelock, registry, governor, author, contractor, arbiter, user1, user2] = await ethers.getSigners();
-        
+
         const NativeProjectImpl = await ethers.getContractFactory("NativeProject");
         nativeProjectImpl = await NativeProjectImpl.deploy();
         const ERC20ProjectImpl = await ethers.getContractFactory("ERC20Project");
         erc20ProjectImpl = await ERC20ProjectImpl.deploy();
         const Economy = await ethers.getContractFactory("Economy");
-        economy = await Economy.deploy();
+        economy = await Economy.deploy(ARBITRATION_FEE_BPS);
         const TestToken = await ethers.getContractFactory("TestToken");
         testToken = await TestToken.deploy();
         const MockRepToken = await ethers.getContractFactory("MockRepToken");
         mockRepToken = await MockRepToken.deploy();
-        
+
         await economy.connect(deployer).setImplementations(await nativeProjectImpl.getAddress(), await erc20ProjectImpl.getAddress());
         await economy.connect(deployer).setDaoAddresses(timelock.address, registry.address, governor.address, await mockRepToken.getAddress());
-        await economy.connect(timelock).setNativeArbitrationFee(NATIVE_ARBITRATION_FEE);
-        
+
         await testToken.connect(deployer).transfer(author.address, ethers.parseEther("10000"));
         await testToken.connect(deployer).transfer(contractor.address, ethers.parseEther("10000"));
         await testToken.connect(deployer).transfer(user1.address, ethers.parseEther("10000"));
@@ -75,8 +70,9 @@ describe("Project Lifecycle under DAO Governance", function () {
             await project.connect(user1).sendFunds(fundingAmount);
             expect(await project.projectValue()).to.equal(fundingAmount);
 
-            // 3. Contractor signs (Ongoing stage)
-            await testToken.connect(contractor).approve(await project.getAddress(), TOKEN_ARBITRATION_FEE / 2n);
+            // 3. Contractor signs and stakes half the arbitration fee (Ongoing stage)
+            const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await testToken.connect(contractor).approve(await project.getAddress(), arbitrationFee / 2n);
             await project.connect(contractor).signContract();
             expect(await project.stage()).to.equal(2); // Ongoing
 
@@ -89,9 +85,9 @@ describe("Project Lifecycle under DAO Governance", function () {
             // 5. Contractor withdraws payment
             const contractorBalanceBefore = await testToken.balanceOf(contractor.address);
             const authorBalanceBefore = await testToken.balanceOf(author.address);
-            
+
             await project.connect(contractor).withdrawAsContractor();
-            
+
             const platformFee = fundingAmount / 100n; // 1%
             const authorFee = (fundingAmount - platformFee) / 100n; // 1% of remainder
             const expectedContractorPayout = fundingAmount - platformFee - authorFee;
@@ -103,20 +99,16 @@ describe("Project Lifecycle under DAO Governance", function () {
             const contractorProfile = await economy.getUser(contractor.address);
             const authorProfile = await economy.getUser(author.address);
             const tokenAddr = await testToken.getAddress();
-            
+
             expect(contractorProfile.earnedTokens[0]).to.equal(tokenAddr);
             expect(contractorProfile.earnedAmounts[0]).to.equal(expectedContractorPayout);
             expect(authorProfile.earnedTokens[0]).to.equal(tokenAddr);
             expect(authorProfile.earnedAmounts[0]).to.equal(authorFee);
-            
-            // 7. Parties reclaim their arbitration fees
-            const authorFeeBalanceBefore = await testToken.balanceOf(author.address);
-            await project.connect(author).reclaimArbitrationFee();
-            expect(await testToken.balanceOf(author.address)).to.equal(authorFeeBalanceBefore + TOKEN_ARBITRATION_FEE / 2n);
 
-            const contractorFeeBalanceBefore = await testToken.balanceOf(contractor.address);
-            await project.connect(contractor).reclaimArbitrationFee();
-            expect(await testToken.balanceOf(contractor.address)).to.equal(contractorFeeBalanceBefore + TOKEN_ARBITRATION_FEE / 2n);
+            // 7. Contractor reclaims their arbitration stake (no dispute occurred)
+            const contractorStakeBalanceBefore = await testToken.balanceOf(contractor.address);
+            await project.connect(contractor).reclaimArbitrationStake();
+            expect(await testToken.balanceOf(contractor.address)).to.equal(contractorStakeBalanceBefore + arbitrationFee / 2n);
         });
     });
 
@@ -129,7 +121,12 @@ describe("Project Lifecycle under DAO Governance", function () {
             // 1. Create and fund project
             project = await createProject(true); // Native
             await project.connect(user1).sendFunds({ value: fundingAmount });
-            await project.connect(contractor).signContract({ value: NATIVE_ARBITRATION_FEE / 2n });
+
+            // Calculate arbitration fee based on project value
+            const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+
+            // Contractor signs and stakes half the arbitration fee
+            await project.connect(contractor).signContract({ value: arbitrationFee / 2n });
             expect(await project.stage()).to.equal(2); // Ongoing
 
             // 2. Backers vote to dispute (Dispute stage)
@@ -141,10 +138,10 @@ describe("Project Lifecycle under DAO Governance", function () {
             const arbitrateTx = await project.connect(arbiter).arbitrate(arbiterPayoutPercent, "ruling_hash");
             const arbitrateReceipt = await arbitrateTx.wait();
             const arbitrateGasUsed = arbitrateReceipt.gasUsed * arbitrateTx.gasPrice;
-            
+
             expect(await project.stage()).to.equal(4); // Appealable
             expect(await project.originalDisputeResolution()).to.equal(arbiterPayoutPercent);
-            
+
             // 4. Simulate appeal period ending without a DAO appeal, then finalize
             const appealPeriod = await economy.appealPeriod();
             await time.increase(appealPeriod + 1n);
@@ -153,26 +150,33 @@ describe("Project Lifecycle under DAO Governance", function () {
             // 5. Verify final state (Closed)
             expect(await project.stage()).to.equal(6); // Closed
             expect(await project.disputeResolution()).to.equal(arbiterPayoutPercent);
-            // MODIFIED: Account for gas spent by arbiter to submit their ruling.
-            expect(await ethers.provider.getBalance(arbiter.address)).to.equal(arbiterBalanceBefore - arbitrateGasUsed + NATIVE_ARBITRATION_FEE);
-            
+            // Arbiter gets the full arbitration fee
+            expect(await ethers.provider.getBalance(arbiter.address)).to.equal(arbiterBalanceBefore - arbitrateGasUsed + arbitrationFee);
+
             // 6. Contractor withdraws their partial payment
-            const expectedContractorShare = (fundingAmount * BigInt(arbiterPayoutPercent)) / 100n;
+            // The project value after arbitration fee deduction (half comes from project funds)
+            const contributorShareOfArbFee = arbitrationFee - (arbitrationFee / 2n);
+            const projectValueAfterFee = fundingAmount - contributorShareOfArbFee;
+            const expectedContractorShare = (projectValueAfterFee * BigInt(arbiterPayoutPercent)) / 100n;
             const platformFee = expectedContractorShare / 100n;
             const authorFee = (expectedContractorShare - platformFee) / 100n;
-            
+
             await project.connect(contractor).withdrawAsContractor();
-            
+
             // 7. Contributor withdraws their remaining funds
             const userBalanceBefore = await ethers.provider.getBalance(user1.address);
-            const expectedUserRefund = fundingAmount - expectedContractorShare;
 
             const withdrawTx = await project.connect(user1).withdrawAsContributor();
             const withdrawReceipt = await withdrawTx.wait();
             const withdrawGas = withdrawReceipt.gasUsed * withdrawTx.gasPrice;
 
+            // User's refund accounts for arbitration fee share and dispute resolution
+            const userArbFeeShare = contributorShareOfArbFee;
+            const remainingAfterArbFee = fundingAmount - userArbFeeShare;
+            const expectedUserRefund = (remainingAfterArbFee * BigInt(100 - arbiterPayoutPercent)) / 100n;
+
             expect(await ethers.provider.getBalance(user1.address)).to.equal(userBalanceBefore + expectedUserRefund - withdrawGas);
-            
+
             // 8. Verify spendings were recorded in Economy
             const userProfile = await economy.getUser(user1.address);
             const expectedExpenditure = fundingAmount - expectedUserRefund;
@@ -187,7 +191,7 @@ describe("Project Lifecycle under DAO Governance", function () {
             const fundingAmount = ethers.parseEther("250");
             await testToken.connect(user1).approve(await project.getAddress(), fundingAmount);
             await project.connect(user1).sendFunds(fundingAmount);
-            
+
             const userBalanceBefore = await testToken.balanceOf(user1.address);
             await project.connect(user1).withdrawAsContributor();
             expect(await testToken.balanceOf(user1.address)).to.equal(userBalanceBefore + fundingAmount);
@@ -202,7 +206,9 @@ describe("Project Lifecycle under DAO Governance", function () {
             await testToken.connect(user2).approve(await project.getAddress(), amount2);
             await project.connect(user2).sendFunds(amount2);
 
-            await testToken.connect(contractor).approve(await project.getAddress(), TOKEN_ARBITRATION_FEE / 2n);
+            const totalFunding = amount1 + amount2;
+            const arbitrationFee = (totalFunding * BigInt(ARBITRATION_FEE_BPS)) / 10000n;
+            await testToken.connect(contractor).approve(await project.getAddress(), arbitrationFee / 2n);
             await project.connect(contractor).signContract();
 
             // 1. Minority user (user1) votes to dispute. Quorum is not met.
@@ -226,13 +232,13 @@ describe("Project Lifecycle under DAO Governance", function () {
         it("should enforce the projectThreshold for creating projects", async function() {
             const threshold = ethers.parseEther("10");
             await economy.connect(timelock).setProjectThreshold(threshold);
-            
+
             // This should fail, author has no RepTokens
             await expect(createProject(true)).to.be.revertedWith("Insufficient reputation to create a project");
 
             // Mint some mock rep tokens to the author
             await mockRepToken.connect(deployer).mint(author.address, threshold);
-            
+
             // This should now succeed
             await expect(createProject(true)).to.not.be.reverted;
         });

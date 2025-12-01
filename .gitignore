@@ -8,4 +8,4 @@ config.js
 # Hardhat files
 cache
 artifacts
-
+SECURITY-AUDIT.md

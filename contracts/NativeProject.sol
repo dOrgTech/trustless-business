@@ -30,8 +30,7 @@ contract NativeProject is Initializable {
     bool public fundsReleased;
     uint public arbitrationFee;
     bool public arbitrationFeePaidOut = false;
-    bool public contractorWithdrawnArbitrationFee = false;
-    bool public authorWithdrawnArbitrationFee = false;
+    bool public contractorReclaimedStake = false;
 
     address public daoTimelock;
     address public daoGovernor;
@@ -93,19 +92,26 @@ contract NativeProject is Initializable {
         arbiter = _arbiter;
         termsHash = _termsHash;
         repo = _repo;
-        
+
         daoTimelock = _daoTimelock;
         daoGovernor = _daoGovernor;
 
-        arbitrationFee = IGovernedEconomy(_economy).nativeArbitrationFee();
+        // arbitrationFee is now calculated at signing time based on projectValue
 
         economy.registerProjectRoles(address(this), _author, _contractor, _arbiter);
 
         if (contractor != address(0) && arbiter != address(0)) {
-            require(msg.value >= arbitrationFee / 2, "Must stake half of the arbitration fee");
             stage = Stage.Pending;
         } else {
             stage = Stage.Open;
+        }
+
+        // Initial funding from author (if any) goes to projectValue
+        if (msg.value > 0) {
+            backers.push(_author);
+            contributors[_author] = msg.value;
+            projectValue = msg.value;
+            emit SendFunds(_author, msg.value);
         }
     }
     
@@ -139,19 +145,16 @@ contract NativeProject is Initializable {
         emit ProjectClosed(msg.sender);
     }
 
-    function setParties(address _contractor, address _arbiter, string memory _termsHash) public payable {
+    function setParties(address _contractor, address _arbiter, string memory _termsHash) public {
         require(stage == Stage.Open, "Parties can only be set in 'open' stage.");
         require(msg.sender == author, "Only the Project's Author can set the other parties.");
         require(_contractor != address(0) && _arbiter != address(0), "Contractor and arbiter addresses must be valid.");
-        
-        arbitrationFee = IGovernedEconomy(address(economy)).nativeArbitrationFee();
-        require(msg.value >= arbitrationFee / 2, "Must stake half of the arbitration fee.");
 
         coolingOffPeriodEnds = block.timestamp + IGovernedEconomy(address(economy)).coolingOffPeriod();
         contractor = _contractor;
         arbiter = _arbiter;
         termsHash = _termsHash;
-        
+
         economy.registerProjectRoles(address(this), address(0), _contractor, _arbiter);
 
         emit SetParties(_contractor, _arbiter, _termsHash);
@@ -175,8 +178,15 @@ contract NativeProject is Initializable {
         require(msg.sender == contractor, "Only the designated contractor can sign the contract");
         require(stage == Stage.Pending, "The project can only be signed while in `pending` stage.");
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
-        require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee to sign the contract.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
+
+        // Calculate arbitration fee based on project value at signing time
+        uint feeBps = IGovernedEconomy(address(economy)).arbitrationFeeBps();
+        arbitrationFee = (projectValue * feeBps) / 10000;
+
+        // Contractor must stake their half of the arbitration fee
+        require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee to sign the contract.");
+
         stage = Stage.Ongoing;
         emit ContractSigned(msg.sender);
     }
@@ -313,21 +323,28 @@ contract NativeProject is Initializable {
     function _finalizeDispute(uint256 percent, string memory rulingHash) private {
         disputeResolution = percent;
         ruling_hash = rulingHash;
-        availableToContractor = (projectValue * percent) / 100;
         stage = Stage.Closed;
+        arbitrationFeePaidOut = true;
+
+        // Arbiter fee: half from contractor's stake, half from project funds
+        uint contractorStake = arbitrationFee / 2;
+        uint contributorShare = arbitrationFee - contractorStake; // Handles odd amounts
+
+        // Deduct contributor share from project value before calculating contractor's share
+        uint projectValueAfterArbFee = projectValue - contributorShare;
+        availableToContractor = (projectValueAfterArbFee * percent) / 100;
 
         if (arbiterHasRuled) {
-            arbitrationFeePaidOut = true;
+            // Pay arbiter the full fee
             (bool sentArbiter, ) = payable(arbiter).call{value: arbitrationFee}("");
             require(sentArbiter, "Failed to send arbitration fee to arbiter");
             economy.updateEarnings(arbiter, arbitrationFee, economy.NATIVE_CURRENCY());
         } else {
-            // ** THE FIX: Mark fee as paid out even when forfeited to prevent reclaims. **
-            arbitrationFeePaidOut = true;
+            // Arbiter didn't rule - forfeit fee to DAO
             (bool sentEconomy, ) = payable(address(economy)).call{value: arbitrationFee}("");
             require(sentEconomy, "Failed to send forfeited fee to DAO");
         }
-        
+
         emit ProjectClosed(msg.sender);
     }
 
@@ -373,15 +390,29 @@ contract NativeProject is Initializable {
         uint256 contributorAmount = contributors[msg.sender];
         require(contributorAmount > 0, "No contributions to withdraw.");
         contributors[msg.sender] = 0;
-        
-        uint256 exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
-        uint256 expenditure = contributorAmount - exitAmount;
+
+        uint256 exitAmount;
+        uint256 expenditure;
+
+        if (arbitrationFeePaidOut) {
+            // Dispute occurred - half of arbitration fee came from project funds
+            // Calculate contributor's share of that fee proportionally
+            uint contributorArbFeeShare = (arbitrationFee / 2 * contributorAmount) / projectValue;
+            uint remainingContribution = contributorAmount - contributorArbFeeShare;
+            exitAmount = (remainingContribution * (100 - disputeResolution)) / 100;
+            expenditure = contributorAmount - exitAmount;
+        } else {
+            // No dispute - standard calculation
+            exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
+            expenditure = contributorAmount - exitAmount;
+        }
+
         projectValue -= exitAmount;
-        
+
         if (expenditure > 0) {
             economy.updateSpendings(msg.sender, expenditure, economy.NATIVE_CURRENCY());
         }
-        
+
         if (exitAmount > 0) {
             (bool sent, ) = payable(msg.sender).call{value: exitAmount}("");
             require(sent, "Failed to send Ether");
@@ -390,24 +421,16 @@ contract NativeProject is Initializable {
         emit ContributorWithdrawn(msg.sender, exitAmount);
     }
     
-    function reclaimArbitrationFee() public {
-        require(stage == Stage.Closed, "Arbitration fee can be reclaimed once the project is closed.");
-        require(arbitrationFeePaidOut == false, "The fee has been paid out to the Arbiter (because there was a dispute).");
-        require(msg.sender == author || msg.sender == contractor, "Arbitration fee can only be returned to the parties.");
-        
-        uint amountToWithdraw = arbitrationFee / 2;
+    function reclaimArbitrationStake() public {
+        require(stage == Stage.Closed, "Stake can only be reclaimed once the project is closed.");
+        require(arbitrationFeePaidOut == false, "Stake was used to pay the arbiter.");
+        require(msg.sender == contractor, "Only the contractor can reclaim their stake.");
+        require(contractorReclaimedStake == false, "You have already reclaimed your stake.");
 
-        if (msg.sender == author) {
-            require(authorWithdrawnArbitrationFee == false, "You have already claimed this back.");
-            authorWithdrawnArbitrationFee = true;
-            (bool sent, ) = payable(author).call{value: amountToWithdraw}("");
-            require(sent, "Failed to withdraw.");
-        } else {
-            require(contractorWithdrawnArbitrationFee == false, "You have already claimed this back.");
-            contractorWithdrawnArbitrationFee = true;
-            (bool sent, ) = payable(contractor).call{value: amountToWithdraw}("");
-            require(sent, "Failed to withdraw.");
-        }
+        contractorReclaimedStake = true;
+        uint stakeAmount = arbitrationFee / 2;
+        (bool sent, ) = payable(contractor).call{value: stakeAmount}("");
+        require(sent, "Failed to withdraw stake.");
     }
     
     function daoVeto() public {

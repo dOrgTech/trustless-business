@@ -39,7 +39,9 @@ describe("TrustlessFactory Deployment", function () {
         };
         
         // THE FIX: Construct economyParams as a JS object to match the Solidity struct
+        const arbitrationFeeBps = 500; // 5%
         const economyParams = {
+            arbitrationFeeBps: arbitrationFeeBps,
             initialPlatformFeeBps: 100,
             initialAuthorFeeBps: 100,
             initialCoolingOffPeriod: 60,
@@ -49,7 +51,7 @@ describe("TrustlessFactory Deployment", function () {
         };
 
         // --- TX 1: Deploy Infrastructure ---
-        const infraTx = await trustlessFactory.deployInfrastructure(timelockDelay);
+        const infraTx = await trustlessFactory.deployInfrastructure(timelockDelay, arbitrationFeeBps);
         const infraReceipt = await infraTx.wait();
         const infraEvent = infraReceipt.logs.find(log => log.eventName === 'InfrastructureDeployed');
         const { economy, registry, timelock } = infraEvent.args;
@@ -68,7 +70,9 @@ describe("TrustlessFactory Deployment", function () {
         
         const configureTx = await trustlessFactory.configureAndFinalize(
             addressParams,
-            economyParams
+            economyParams,
+            [], // registryKeys
+            []  // registryValues
         );
         const configureReceipt = await configureTx.wait();
         const configuredEvent = configureReceipt.logs.find(log => log.eventName === 'SuiteConfigured');
