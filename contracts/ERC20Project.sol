@@ -20,9 +20,19 @@ contract ERC20Project is Initializable {
     string public termsHash;
     string public repo;
     address[] public backers;
-    mapping(address => uint) public contributors;
-    mapping(address => uint) public contributorsReleasing;
-    mapping(address => uint) public contributorsDisputing;
+
+    // Immediate release: backers can specify what portion is available to contractor at signing
+    struct Contribution {
+        uint total;           // Total amount contributed
+        uint immediateBps;    // Basis points released immediately (0 to maxImmediateBps)
+    }
+    mapping(address => Contribution) public contributions;
+    uint public totalImmediate;    // Sum of all immediate portions (released at signing)
+    uint public totalLocked;       // Sum of all locked portions (in escrow)
+    uint public immediateReleased; // Amount of immediate funds already paid out
+
+    mapping(address => uint) public contributorsReleasing;  // Tracks locked amount voting to release
+    mapping(address => uint) public contributorsDisputing;  // Tracks locked amount voting to dispute
     uint public availableToContractor;
     uint public totalVotesForRelease;
     uint public totalVotesForDispute;
@@ -52,6 +62,9 @@ contract ERC20Project is Initializable {
         address arbiter;
         Stage stage;
         uint projectValue;
+        uint totalImmediate;
+        uint totalLocked;
+        uint immediateReleased;
         uint totalVotesForRelease;
         uint totalVotesForDispute;
         uint availableToContractor;
@@ -61,7 +74,8 @@ contract ERC20Project is Initializable {
     uint256 public constant ARBITRATION_TIMEOUT = 150 days;
     
     event SetParties(address _contractor, address _arbiter, string _termsHash);
-    event SendFunds(address who, uint256 howMuch);
+    event SendFunds(address who, uint256 howMuch, uint256 immediateBps);
+    event ImmediateFundsReleased(address contractor, uint256 amount);
     event ContractorPaid(address contractor, uint256 amount);
     event ContributorWithdrawn(address contributor, uint256 amount);
     event ProjectDisputed(address by);
@@ -120,6 +134,9 @@ contract ERC20Project is Initializable {
             arbiter: arbiter,
             stage: stage,
             projectValue: projectValue,
+            totalImmediate: totalImmediate,
+            totalLocked: totalLocked,
+            immediateReleased: immediateReleased,
             totalVotesForRelease: totalVotesForRelease,
             totalVotesForDispute: totalVotesForDispute,
             availableToContractor: availableToContractor,
@@ -154,24 +171,43 @@ contract ERC20Project is Initializable {
         stage = Stage.Pending;
     }
 
+    // Legacy function for backwards compatibility - defaults to 0% immediate
     function sendFunds(uint256 amount) public {
+        sendFundsWithImmediate(amount, 0);
+    }
+
+    function sendFundsWithImmediate(uint256 amount, uint immediateBps) public {
         require(
             stage == Stage.Open || stage == Stage.Pending,
             "Funding is only allowed when the project is in 'open' or 'pending' stage."
         );
         require(amount > 0, "Amount must be greater than zero.");
-        
+        require(immediateBps <= IGovernedEconomy(address(economy)).maxImmediateBps(), "Immediate percentage exceeds maximum allowed");
+
         require(
             token.transferFrom(msg.sender, address(this), amount),
             "Token transfer failed. Did you approve?"
         );
 
-        if (contributors[msg.sender] == 0) {
+        uint immediateAmount = (amount * immediateBps) / 10000;
+
+        if (contributions[msg.sender].total == 0) {
             backers.push(msg.sender);
+            contributions[msg.sender].total = amount;
+            contributions[msg.sender].immediateBps = immediateBps;
+        } else {
+            // Weighted average for additional contributions
+            uint oldTotal = contributions[msg.sender].total;
+            uint oldImmediate = (oldTotal * contributions[msg.sender].immediateBps) / 10000;
+            contributions[msg.sender].total = oldTotal + amount;
+            contributions[msg.sender].immediateBps = ((oldImmediate + immediateAmount) * 10000) / contributions[msg.sender].total;
         }
-        contributors[msg.sender] += amount;
+
+        totalImmediate += immediateAmount;
+        totalLocked += amount - immediateAmount;
         projectValue += amount;
-        emit SendFunds(msg.sender, amount);
+
+        emit SendFunds(msg.sender, amount, immediateBps);
     }
 
     function signContract() public {
@@ -180,56 +216,74 @@ contract ERC20Project is Initializable {
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
 
-        // Calculate arbitration fee based on project value at signing time
-        uint feeBps = IGovernedEconomy(address(economy)).arbitrationFeeBps();
-        arbitrationFee = (projectValue * feeBps) / 10000;
-
-        // Contractor must stake their half of the arbitration fee
+        arbitrationFee = (projectValue * IGovernedEconomy(address(economy)).arbitrationFeeBps()) / 10000;
         require(token.transferFrom(msg.sender, address(this), arbitrationFee / 2), "Must stake half the arbitration fee to sign.");
 
         stage = Stage.Ongoing;
         emit ContractSigned(msg.sender);
+
+        // Release immediate funds to contractor (fee-free)
+        if (totalImmediate > 0) {
+            immediateReleased = totalImmediate;
+            economy.updateEarnings(contractor, totalImmediate, address(token));
+            require(token.transfer(contractor, totalImmediate), "Failed to send immediate funds to contractor");
+            emit ImmediateFundsReleased(contractor, totalImmediate);
+        }
     }
     
+    // Helper to calculate locked amount for a contributor
+    function _getLockedAmount(address contributor) internal view returns (uint) {
+        Contribution memory contrib = contributions[contributor];
+        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
+        return contrib.total - immediateAmount;
+    }
+
     function voteToReleasePayment() public {
         require(stage == Stage.Ongoing, "Project must be ongoing to vote");
-        uint contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "Only contributors can vote");
-        
+
+        // Voting power = locked portion only (immediate givers have less say)
+        uint lockedAmount = _getLockedAmount(msg.sender);
+        require(lockedAmount > 0, "Only contributors with locked funds can vote");
+
         if (contributorsDisputing[msg.sender] > 0) {
             totalVotesForDispute -= contributorsDisputing[msg.sender];
             contributorsDisputing[msg.sender] = 0;
         }
         if (contributorsReleasing[msg.sender] == 0) {
-            totalVotesForRelease += contributorAmount;
-            contributorsReleasing[msg.sender] = contributorAmount;
+            totalVotesForRelease += lockedAmount;
+            contributorsReleasing[msg.sender] = lockedAmount;
         }
 
+        // Quorum calculated against totalLocked (not totalImmediate which is already released)
         uint quorumBps = IGovernedEconomy(address(economy)).backersVoteQuorumBps();
-        if (totalVotesForRelease * 10000 >= projectValue * quorumBps) {
+        if (totalVotesForRelease * 10000 >= totalLocked * quorumBps) {
             stage = Stage.Closed;
-            availableToContractor = projectValue;
+            availableToContractor = totalLocked; // Only locked portion remains to distribute
             fundsReleased = true;
+            disputeResolution = 100; // 100% to contractor means 0% back to backers
             emit ProjectClosed(msg.sender);
         }
     }
 
     function voteToDispute() public {
         require(stage == Stage.Ongoing, "Project must be ongoing to vote");
-        uint contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "Only contributors can vote");
+
+        // Voting power = locked portion only
+        uint lockedAmount = _getLockedAmount(msg.sender);
+        require(lockedAmount > 0, "Only contributors with locked funds can vote");
 
         if (contributorsReleasing[msg.sender] > 0) {
             totalVotesForRelease -= contributorsReleasing[msg.sender];
             contributorsReleasing[msg.sender] = 0;
         }
         if (contributorsDisputing[msg.sender] == 0) {
-            totalVotesForDispute += contributorAmount;
-            contributorsDisputing[msg.sender] = contributorAmount;
+            totalVotesForDispute += lockedAmount;
+            contributorsDisputing[msg.sender] = lockedAmount;
         }
 
+        // Quorum calculated against totalLocked
         uint quorumBps = IGovernedEconomy(address(economy)).backersVoteQuorumBps();
-        if (totalVotesForDispute * 10000 >= projectValue * quorumBps) {
+        if (totalVotesForDispute * 10000 >= totalLocked * quorumBps) {
             stage = Stage.Dispute;
             disputeStarted = block.timestamp;
             emit ProjectDisputed(msg.sender);
@@ -338,23 +392,17 @@ contract ERC20Project is Initializable {
         stage = Stage.Closed;
         arbitrationFeePaidOut = true;
 
-        // Arbiter fee: half from contractor's stake, half from project funds
-        uint contractorStake = arbitrationFee / 2;
-        uint contributorShare = arbitrationFee - contractorStake; // Handles odd amounts
-
-        // Deduct contributor share from project value before calculating contractor's share
-        uint projectValueAfterArbFee = projectValue - contributorShare;
-        availableToContractor = (projectValueAfterArbFee * percent) / 100;
+        // Arb fee: half from contractor's stake, half from locked
+        uint contributorShare = arbitrationFee - (arbitrationFee / 2);
+        uint totalEntitlement = ((immediateReleased + totalLocked - contributorShare) * percent) / 100;
+        availableToContractor = totalEntitlement > immediateReleased ? totalEntitlement - immediateReleased : 0;
 
         if (arbiterHasRuled) {
-            // Pay arbiter the full fee
             require(token.transfer(arbiter, arbitrationFee), "Failed to send arbitration fee to arbiter");
             economy.updateEarnings(arbiter, arbitrationFee, address(token));
         } else {
-            // Arbiter didn't rule - forfeit fee to DAO
             require(token.transfer(address(economy), arbitrationFee), "Failed to send forfeited fee to DAO");
         }
-
         emit ProjectClosed(msg.sender);
     }
     
@@ -393,36 +441,41 @@ contract ERC20Project is Initializable {
     function withdrawAsContributor() public {
         require(stage == Stage.Open || stage == Stage.Pending || stage == Stage.Closed, "Withdrawals only allowed when the project is open, pending or closed.");
 
-        uint256 contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "No contributions to withdraw.");
-        contributors[msg.sender] = 0;
+        uint contribTotal = contributions[msg.sender].total;
+        uint contribImmediateBps = contributions[msg.sender].immediateBps;
+        require(contribTotal > 0, "No contributions to withdraw.");
+
+        // Calculate immediate and locked portions
+        uint immediateAmount = (contribTotal * contribImmediateBps) / 10000;
+        uint lockedAmount = contribTotal - immediateAmount;
+
+        // Clear the contribution
+        contributions[msg.sender].total = 0;
+        contributions[msg.sender].immediateBps = 0;
 
         uint256 exitAmount;
         uint256 expenditure;
 
-        if (arbitrationFeePaidOut) {
-            // Dispute occurred - half of arbitration fee came from project funds
-            // Calculate contributor's share of that fee proportionally
-            uint contributorArbFeeShare = (arbitrationFee / 2 * contributorAmount) / projectValue;
-            uint remainingContribution = contributorAmount - contributorArbFeeShare;
-            exitAmount = (remainingContribution * (100 - disputeResolution)) / 100;
-            expenditure = contributorAmount - exitAmount;
+        if (stage == Stage.Open || stage == Stage.Pending) {
+            // Pre-signing withdrawal: get everything back
+            exitAmount = contribTotal;
+            totalImmediate -= immediateAmount;
+            totalLocked -= lockedAmount;
+            projectValue -= contribTotal;
         } else {
-            // No dispute - standard calculation
-            exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
-            expenditure = contributorAmount - exitAmount;
+            // Post-signing: immediate is gone, only locked available
+            expenditure = immediateAmount;
+            if (arbitrationFeePaidOut) {
+                uint arbShare = (arbitrationFee / 2 * lockedAmount) / totalLocked;
+                exitAmount = ((lockedAmount - arbShare) * (100 - disputeResolution)) / 100;
+            } else {
+                exitAmount = (lockedAmount * (100 - disputeResolution)) / 100;
+            }
+            expenditure += lockedAmount - exitAmount;
         }
 
-        projectValue -= exitAmount;
-
-        if (expenditure > 0) {
-            economy.updateSpendings(msg.sender, expenditure, address(token));
-        }
-
-        if (exitAmount > 0) {
-            require(token.transfer(msg.sender, exitAmount), "Failed to send tokens");
-        }
-
+        if (expenditure > 0) economy.updateSpendings(msg.sender, expenditure, address(token));
+        if (exitAmount > 0) require(token.transfer(msg.sender, exitAmount), "Failed to send tokens");
         emit ContributorWithdrawn(msg.sender, exitAmount);
     }
     

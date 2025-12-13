@@ -12,5 +12,6 @@ interface IGovernedEconomy {
     function appealPeriod() external view returns (uint);
     function repTokenAddress() external view returns (address);
     function projectThreshold() external view returns (uint);
+    function maxImmediateBps() external view returns (uint);
 }
 // IGovernedEconomy.sol

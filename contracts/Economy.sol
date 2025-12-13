@@ -28,7 +28,8 @@ contract Economy is IEconomy {
     uint public coolingOffPeriod;
     uint public backersVoteQuorumBps;
     uint public projectThreshold;
-    uint public appealPeriod; // NEW
+    uint public appealPeriod;
+    uint public maxImmediateBps; // Max % of contribution that can be released immediately (basis points)
 
     // --- STATE: Project & User Ledgers ---
     address public nativeProjectImplementation;
@@ -73,6 +74,7 @@ contract Economy is IEconomy {
         uint backersVoteQuorumBps;
         uint projectThreshold;
         uint appealPeriod;
+        uint maxImmediateBps;
         // Implementation addresses
         address nativeProjectImplementation;
         address erc20ProjectImplementation;
@@ -90,7 +92,8 @@ contract Economy is IEconomy {
     event CoolingOffPeriodSet(uint newPeriod);
     event BackersVoteQuorumSet(uint newQuorumBps);
     event ProjectThresholdSet(uint newThreshold);
-    event AppealPeriodSet(uint newPeriod); // NEW
+    event AppealPeriodSet(uint newPeriod);
+    event MaxImmediateBpsSet(uint newMaxBps);
 
     constructor(uint _arbitrationFeeBps) {
         arbitrationFeeBps = _arbitrationFeeBps;
@@ -99,6 +102,7 @@ contract Economy is IEconomy {
         coolingOffPeriod = 2 minutes;
         backersVoteQuorumBps = 7000; // 70%
         appealPeriod = 7 days;
+        maxImmediateBps = 2000; // 20% - max portion of contribution available to contractor immediately
     }
 
     function setImplementations(address _native, address _erc20) external {
@@ -125,6 +129,7 @@ contract Economy is IEconomy {
             backersVoteQuorumBps: backersVoteQuorumBps,
             projectThreshold: projectThreshold,
             appealPeriod: appealPeriod,
+            maxImmediateBps: maxImmediateBps,
             nativeProjectImplementation: nativeProjectImplementation,
             erc20ProjectImplementation: erc20ProjectImplementation,
             numberOfProjects: deployedProjects.length
@@ -281,6 +286,13 @@ contract Economy is IEconomy {
         require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
         appealPeriod = newPeriod;
         emit AppealPeriodSet(newPeriod);
+    }
+
+    function setMaxImmediateBps(uint newMaxBps) external {
+        require(timelockAddress == address(0) || msg.sender == timelockAddress, "Protected");
+        require(newMaxBps <= 5000, "Max immediate cannot exceed 50%");
+        maxImmediateBps = newMaxBps;
+        emit MaxImmediateBpsSet(newMaxBps);
     }
 
     function withdrawNative() public {

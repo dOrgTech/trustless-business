@@ -80,7 +80,7 @@ describe("Project Lifecycle under DAO Governance", function () {
             await project.connect(user1).voteToReleasePayment();
             expect(await project.stage()).to.equal(6); // Closed
             expect(await project.fundsReleased()).to.be.true;
-            expect(await project.disputeResolution()).to.equal(0);
+            expect(await project.disputeResolution()).to.equal(100); // 100% to contractor on release
 
             // 5. Contractor withdraws payment
             const contractorBalanceBefore = await testToken.balanceOf(contractor.address);

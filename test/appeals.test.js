@@ -240,7 +240,8 @@ describe("Appeals and Advanced Fund Handling", function () {
             const gasUsed = sendReceipt.gasUsed * sendTx.gasPrice;
 
             expect(await project.projectValue()).to.equal(fundingAmount);
-            expect(await project.contributors(user1.address)).to.equal(fundingAmount);
+            const contribution = await project.contributions(user1.address);
+            expect(contribution.total).to.equal(fundingAmount);
             expect(await ethers.provider.getBalance(user1.address)).to.equal(userBalanceBefore - fundingAmount - gasUsed);
         });
 

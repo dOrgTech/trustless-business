@@ -18,9 +18,19 @@ contract NativeProject is Initializable {
     string public termsHash;
     string public repo;
     address[] public backers;
-    mapping(address => uint) public contributors;
-    mapping(address => uint) public contributorsReleasing;
-    mapping(address => uint) public contributorsDisputing;
+
+    // Immediate release: backers can specify what portion is available to contractor at signing
+    struct Contribution {
+        uint total;           // Total amount contributed
+        uint immediateBps;    // Basis points released immediately (0 to maxImmediateBps)
+    }
+    mapping(address => Contribution) public contributions;
+    uint public totalImmediate;    // Sum of all immediate portions (released at signing)
+    uint public totalLocked;       // Sum of all locked portions (in escrow)
+    uint public immediateReleased; // Amount of immediate funds already paid out
+
+    mapping(address => uint) public contributorsReleasing;  // Tracks locked amount voting to release
+    mapping(address => uint) public contributorsDisputing;  // Tracks locked amount voting to dispute
     uint public availableToContractor;
     uint public totalVotesForRelease;
     uint public totalVotesForDispute;
@@ -50,6 +60,9 @@ contract NativeProject is Initializable {
         address arbiter;
         Stage stage;
         uint projectValue;
+        uint totalImmediate;
+        uint totalLocked;
+        uint immediateReleased;
         uint totalVotesForRelease;
         uint totalVotesForDispute;
         uint availableToContractor;
@@ -60,7 +73,8 @@ contract NativeProject is Initializable {
     uint256 public constant ARBITRATION_TIMEOUT = 150 days;
 
     event SetParties(address _contractor, address _arbiter, string _termsHash);
-    event SendFunds(address who, uint256 howMuch);
+    event SendFunds(address who, uint256 howMuch, uint256 immediateBps);
+    event ImmediateFundsReleased(address contractor, uint256 amount);
     event ContractorPaid(address contractor, uint256 amount);
     event ContributorWithdrawn(address contributor, uint256 amount);
     event ProjectDisputed(address by);
@@ -107,16 +121,21 @@ contract NativeProject is Initializable {
         }
 
         // Initial funding from author (if any) goes to projectValue
+        // Author's initial funding has 0% immediate (all locked)
         if (msg.value > 0) {
             backers.push(_author);
-            contributors[_author] = msg.value;
+            contributions[_author] = Contribution({
+                total: msg.value,
+                immediateBps: 0
+            });
+            totalLocked = msg.value;
             projectValue = msg.value;
-            emit SendFunds(_author, msg.value);
+            emit SendFunds(_author, msg.value, 0);
         }
     }
     
     receive() external payable {
-        sendFunds();
+        sendFundsWithImmediate(0); // Default to 0% immediate for direct transfers
     }
 
     function getProjectDetails() public view returns (ProjectDetails memory) {
@@ -127,6 +146,9 @@ contract NativeProject is Initializable {
             arbiter: arbiter,
             stage: stage,
             projectValue: projectValue,
+            totalImmediate: totalImmediate,
+            totalLocked: totalLocked,
+            immediateReleased: immediateReleased,
             totalVotesForRelease: totalVotesForRelease,
             totalVotesForDispute: totalVotesForDispute,
             availableToContractor: availableToContractor,
@@ -161,17 +183,37 @@ contract NativeProject is Initializable {
         stage = Stage.Pending;
     }
 
+    // Legacy function for backwards compatibility - defaults to 0% immediate
     function sendFunds() public payable {
+        sendFundsWithImmediate(0);
+    }
+
+    function sendFundsWithImmediate(uint immediateBps) public payable {
         require(
             stage == Stage.Open || stage == Stage.Pending,
             "Funding is only allowed when the project is in 'open' or 'pending' stage."
         );
-        if (contributors[msg.sender] == 0) {
+        require(immediateBps <= IGovernedEconomy(address(economy)).maxImmediateBps(), "Immediate percentage exceeds maximum allowed");
+
+        uint immediateAmount = (msg.value * immediateBps) / 10000;
+
+        if (contributions[msg.sender].total == 0) {
             backers.push(msg.sender);
+            contributions[msg.sender].total = msg.value;
+            contributions[msg.sender].immediateBps = immediateBps;
+        } else {
+            // Weighted average for additional contributions
+            uint oldTotal = contributions[msg.sender].total;
+            uint oldImmediate = (oldTotal * contributions[msg.sender].immediateBps) / 10000;
+            contributions[msg.sender].total = oldTotal + msg.value;
+            contributions[msg.sender].immediateBps = ((oldImmediate + immediateAmount) * 10000) / contributions[msg.sender].total;
         }
-        contributors[msg.sender] += msg.value;
+
+        totalImmediate += immediateAmount;
+        totalLocked += msg.value - immediateAmount;
         projectValue += msg.value;
-        emit SendFunds(msg.sender, msg.value);
+
+        emit SendFunds(msg.sender, msg.value, immediateBps);
     }
 
     function signContract() public payable {
@@ -180,7 +222,7 @@ contract NativeProject is Initializable {
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
 
-        // Calculate arbitration fee based on project value at signing time
+        // Calculate arbitration fee based on total project value at signing time
         uint feeBps = IGovernedEconomy(address(economy)).arbitrationFeeBps();
         arbitrationFee = (projectValue * feeBps) / 10000;
 
@@ -189,47 +231,75 @@ contract NativeProject is Initializable {
 
         stage = Stage.Ongoing;
         emit ContractSigned(msg.sender);
+
+        // Release immediate funds to contractor (fee-free - fees only apply to escrow release)
+        if (totalImmediate > 0) {
+            immediateReleased = totalImmediate;
+
+            // Record earnings for the contractor (immediate portion is fee-free)
+            economy.updateEarnings(contractor, totalImmediate, economy.NATIVE_CURRENCY());
+
+            // Transfer immediate funds to contractor
+            (bool sent, ) = payable(contractor).call{value: totalImmediate}("");
+            require(sent, "Failed to send immediate funds to contractor");
+
+            emit ImmediateFundsReleased(contractor, totalImmediate);
+        }
+    }
+
+    // Helper to calculate locked amount for a contributor
+    function _getLockedAmount(address contributor) internal view returns (uint) {
+        Contribution memory contrib = contributions[contributor];
+        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
+        return contrib.total - immediateAmount;
     }
 
     function voteToReleasePayment() public {
         require(stage == Stage.Ongoing, "Project must be ongoing to vote");
-        uint contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "Only contributors can vote");
+
+        // Voting power = locked portion only (immediate givers have less say)
+        uint lockedAmount = _getLockedAmount(msg.sender);
+        require(lockedAmount > 0, "Only contributors with locked funds can vote");
 
         if (contributorsDisputing[msg.sender] > 0) {
             totalVotesForDispute -= contributorsDisputing[msg.sender];
             contributorsDisputing[msg.sender] = 0;
         }
         if (contributorsReleasing[msg.sender] == 0) {
-            totalVotesForRelease += contributorAmount;
-            contributorsReleasing[msg.sender] = contributorAmount;
+            totalVotesForRelease += lockedAmount;
+            contributorsReleasing[msg.sender] = lockedAmount;
         }
 
+        // Quorum calculated against totalLocked (not totalImmediate which is already released)
         uint quorumBps = IGovernedEconomy(address(economy)).backersVoteQuorumBps();
-        if (totalVotesForRelease * 10000 >= projectValue * quorumBps) {
+        if (totalVotesForRelease * 10000 >= totalLocked * quorumBps) {
             stage = Stage.Closed;
-            availableToContractor = projectValue;
+            availableToContractor = totalLocked; // Only locked portion remains to distribute
             fundsReleased = true;
+            disputeResolution = 100; // 100% to contractor means 0% back to backers
             emit ProjectClosed(msg.sender);
         }
     }
 
     function voteToDispute() public {
         require(stage == Stage.Ongoing, "Project must be ongoing to vote");
-        uint contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "Only contributors can vote");
+
+        // Voting power = locked portion only
+        uint lockedAmount = _getLockedAmount(msg.sender);
+        require(lockedAmount > 0, "Only contributors with locked funds can vote");
 
         if (contributorsReleasing[msg.sender] > 0) {
             totalVotesForRelease -= contributorsReleasing[msg.sender];
             contributorsReleasing[msg.sender] = 0;
         }
         if (contributorsDisputing[msg.sender] == 0) {
-            totalVotesForDispute += contributorAmount;
-            contributorsDisputing[msg.sender] = contributorAmount;
+            totalVotesForDispute += lockedAmount;
+            contributorsDisputing[msg.sender] = lockedAmount;
         }
 
+        // Quorum calculated against totalLocked
         uint quorumBps = IGovernedEconomy(address(economy)).backersVoteQuorumBps();
-        if (totalVotesForDispute * 10000 >= projectValue * quorumBps) {
+        if (totalVotesForDispute * 10000 >= totalLocked * quorumBps) {
             stage = Stage.Dispute;
             disputeStarted = block.timestamp;
             emit ProjectDisputed(msg.sender);
@@ -326,13 +396,26 @@ contract NativeProject is Initializable {
         stage = Stage.Closed;
         arbitrationFeePaidOut = true;
 
-        // Arbiter fee: half from contractor's stake, half from project funds
+        // Arbiter fee: half from contractor's stake, half from locked funds
         uint contractorStake = arbitrationFee / 2;
         uint contributorShare = arbitrationFee - contractorStake; // Handles odd amounts
 
-        // Deduct contributor share from project value before calculating contractor's share
-        uint projectValueAfterArbFee = projectValue - contributorShare;
-        availableToContractor = (projectValueAfterArbFee * percent) / 100;
+        // Contractor's total entitlement is based on total project value (including immediate)
+        // But we deduct arb fee from locked portion only
+        uint lockedAfterArbFee = totalLocked - contributorShare;
+
+        // Calculate contractor's total entitlement from the dispute percentage
+        // This percentage applies to the total project value (immediate + locked - arb fee)
+        uint totalValueAfterArbFee = immediateReleased + lockedAfterArbFee;
+        uint contractorTotalEntitlement = (totalValueAfterArbFee * percent) / 100;
+
+        // Contractor already received immediateReleased, so availableToContractor is the remainder
+        if (contractorTotalEntitlement > immediateReleased) {
+            availableToContractor = contractorTotalEntitlement - immediateReleased;
+        } else {
+            // Contractor already received more than their entitlement via immediate
+            availableToContractor = 0;
+        }
 
         if (arbiterHasRuled) {
             // Pay arbiter the full fee
@@ -387,27 +470,48 @@ contract NativeProject is Initializable {
     function withdrawAsContributor() public {
         require(stage == Stage.Open || stage == Stage.Pending || stage == Stage.Closed, "Withdrawals only allowed when the project is open, pending or closed.");
 
-        uint256 contributorAmount = contributors[msg.sender];
-        require(contributorAmount > 0, "No contributions to withdraw.");
-        contributors[msg.sender] = 0;
+        Contribution memory contrib = contributions[msg.sender];
+        require(contrib.total > 0, "No contributions to withdraw.");
+
+        // Calculate immediate and locked portions
+        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
+        uint lockedAmount = contrib.total - immediateAmount;
+
+        // Clear the contribution
+        contributions[msg.sender].total = 0;
+        contributions[msg.sender].immediateBps = 0;
 
         uint256 exitAmount;
         uint256 expenditure;
 
-        if (arbitrationFeePaidOut) {
-            // Dispute occurred - half of arbitration fee came from project funds
-            // Calculate contributor's share of that fee proportionally
-            uint contributorArbFeeShare = (arbitrationFee / 2 * contributorAmount) / projectValue;
-            uint remainingContribution = contributorAmount - contributorArbFeeShare;
-            exitAmount = (remainingContribution * (100 - disputeResolution)) / 100;
-            expenditure = contributorAmount - exitAmount;
+        if (stage == Stage.Open || stage == Stage.Pending) {
+            // Pre-signing withdrawal: get everything back (immediate not yet released)
+            exitAmount = contrib.total;
+            expenditure = 0;
+            totalImmediate -= immediateAmount;
+            totalLocked -= lockedAmount;
+            projectValue -= contrib.total;
         } else {
-            // No dispute - standard calculation
-            exitAmount = (contributorAmount * (100 - disputeResolution)) / 100;
-            expenditure = contributorAmount - exitAmount;
-        }
+            // Post-signing (Closed stage): immediate is gone, only locked portion available
+            // The immediate portion was released to contractor at signing - that's the backer's risk
+            expenditure = immediateAmount; // Immediate portion is an expenditure (went to contractor)
 
-        projectValue -= exitAmount;
+            if (arbitrationFeePaidOut) {
+                // Dispute occurred - arb fee comes from locked funds proportionally
+                uint contributorArbFeeShare = (arbitrationFee / 2 * lockedAmount) / totalLocked;
+                uint remainingLocked = lockedAmount - contributorArbFeeShare;
+                // disputeResolution % went to contractor, (100 - disputeResolution) % returns to backers
+                uint lockedReturn = (remainingLocked * (100 - disputeResolution)) / 100;
+                exitAmount = lockedReturn;
+                expenditure += (lockedAmount - lockedReturn); // Add locked portion that went to contractor/fees
+            } else {
+                // No dispute (release vote or project cancelled)
+                // disputeResolution is 0 if cancelled, 100 if released
+                uint lockedReturn = (lockedAmount * (100 - disputeResolution)) / 100;
+                exitAmount = lockedReturn;
+                expenditure += (lockedAmount - lockedReturn);
+            }
+        }
 
         if (expenditure > 0) {
             economy.updateSpendings(msg.sender, expenditure, economy.NATIVE_CURRENCY());
