@@ -29,6 +29,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.4.0"
+    "@openzeppelin/contracts": "^5.4.0",
+    "firebase-admin": "^13.6.0"
   }
 }
