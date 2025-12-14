@@ -13,5 +13,6 @@ interface IGovernedEconomy {
     function repTokenAddress() external view returns (address);
     function projectThreshold() external view returns (uint);
     function maxImmediateBps() external view returns (uint);
+    function registryAddress() external view returns (address);
 }
 // IGovernedEconomy.sol

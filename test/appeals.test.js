@@ -194,10 +194,10 @@ describe("Appeals and Advanced Fund Handling", function () {
             // Arbiter should NOT be paid
             expect(await testToken.balanceOf(arbiter.address)).to.equal(0);
 
-            // The forfeited fee should be in the Economy contract
-            const economyBalance = await testToken.balanceOf(await economy.getAddress());
-            // Economy balance contains platform fees and now the forfeited fee
-            expect(economyBalance).to.equal(arbitrationFee);
+            // The forfeited fee should be in the DAO treasury (Registry)
+            const registryBalance = await testToken.balanceOf(registry.address);
+            // Registry balance contains the forfeited arbitration fee
+            expect(registryBalance).to.equal(arbitrationFee);
 
             // Contractor should NOT be able to reclaim their stake (it was used for the fee)
             await expect(project.connect(contractor).reclaimArbitrationStake())
@@ -265,13 +265,13 @@ describe("Appeals and Advanced Fund Handling", function () {
             await expect(project.connect(author).sweepOrphanedTokens(await testToken.getAddress()))
                 .to.be.revertedWith("Only the DAO Timelock can sweep tokens.");
 
-            // Timelock sweeps the tokens to the Economy contract (acting as treasury receiver)
-            const economyBalanceBefore = await testToken.balanceOf(await economy.getAddress());
+            // Timelock sweeps the tokens to the DAO treasury (Registry)
+            const registryBalanceBefore = await testToken.balanceOf(registry.address);
             await project.connect(timelock).sweepOrphanedTokens(await testToken.getAddress());
-            const economyBalanceAfter = await testToken.balanceOf(await economy.getAddress());
+            const registryBalanceAfter = await testToken.balanceOf(registry.address);
 
             // Verify balances and state
-            expect(economyBalanceAfter).to.equal(economyBalanceBefore + orphanedAmount);
+            expect(registryBalanceAfter).to.equal(registryBalanceBefore + orphanedAmount);
             expect(await testToken.balanceOf(projectAddress)).to.equal(projectValue + contractorStake);
             expect(await project.projectValue()).to.equal(projectValue); // Unchanged
         });

@@ -423,9 +423,10 @@ contract NativeProject is Initializable {
             require(sentArbiter, "Failed to send arbitration fee to arbiter");
             economy.updateEarnings(arbiter, arbitrationFee, economy.NATIVE_CURRENCY());
         } else {
-            // Arbiter didn't rule - forfeit fee to DAO
-            (bool sentEconomy, ) = payable(address(economy)).call{value: arbitrationFee}("");
-            require(sentEconomy, "Failed to send forfeited fee to DAO");
+            // Arbiter didn't rule - forfeit fee to DAO treasury
+            address registry = IGovernedEconomy(address(economy)).registryAddress();
+            (bool sentRegistry, ) = payable(registry).call{value: arbitrationFee}("");
+            require(sentRegistry, "Failed to send forfeited fee to DAO treasury");
         }
 
         emit ProjectClosed(msg.sender);
@@ -460,8 +461,9 @@ contract NativeProject is Initializable {
         }
 
         if (platformFee > 0) {
-            (bool sentEconomy, ) = payable(address(economy)).call{value: platformFee}("");
-            require(sentEconomy, "Failed to send platform fee");
+            address registry = governedEconomy.registryAddress();
+            (bool sentRegistry, ) = payable(registry).call{value: platformFee}("");
+            require(sentRegistry, "Failed to send platform fee to DAO treasury");
         }
 
         emit ContractorPaid(contractor, amountToWithdraw);

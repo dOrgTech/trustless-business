@@ -16,6 +16,12 @@ module.exports = {
   }
 },
   networks: {
+    hardhat: {
+      mining: {
+        auto: true,
+        interval: 2000  // Mine a new block every 2 seconds
+      }
+    },
     ganache: {
       url: "http://127.0.0.1:7545",  
       chainId: 1337,                // Your Ganache Chain ID

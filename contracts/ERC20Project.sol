@@ -401,7 +401,9 @@ contract ERC20Project is Initializable {
             require(token.transfer(arbiter, arbitrationFee), "Failed to send arbitration fee to arbiter");
             economy.updateEarnings(arbiter, arbitrationFee, address(token));
         } else {
-            require(token.transfer(address(economy), arbitrationFee), "Failed to send forfeited fee to DAO");
+            // Arbiter didn't rule - forfeit fee to DAO treasury
+            address registry = IGovernedEconomy(address(economy)).registryAddress();
+            require(token.transfer(registry, arbitrationFee), "Failed to send forfeited fee to DAO treasury");
         }
         emit ProjectClosed(msg.sender);
     }
@@ -432,7 +434,8 @@ contract ERC20Project is Initializable {
         }
 
         if (platformFee > 0) {
-            require(token.transfer(address(economy), platformFee), "Failed to send platform fee");
+            address registry = governedEconomy.registryAddress();
+            require(token.transfer(registry, platformFee), "Failed to send platform fee to DAO treasury");
         }
 
         emit ContractorPaid(contractor, amountToWithdraw);
@@ -515,7 +518,8 @@ contract ERC20Project is Initializable {
 
         if (totalBalance > trackedBalance) {
             uint256 orphanedAmount = totalBalance - trackedBalance;
-            require(sweepToken.transfer(address(economy), orphanedAmount), "Failed to sweep tokens");
+            address registry = IGovernedEconomy(address(economy)).registryAddress();
+            require(sweepToken.transfer(registry, orphanedAmount), "Failed to sweep tokens to DAO treasury");
             emit OrphanedTokensSwept(tokenAddress, orphanedAmount);
         }
     }
