@@ -136,7 +136,9 @@ contract RepToken is ERC20, ERC20Permit, ERC20Votes, IAdminToken, IJurisdictionD
         if (bytes(parityStr).length > 0) {
             uint256 parity = Strings.parseUint(parityStr);
             if (parity > 0) {
-                return amount * parity;
+                // Parity is stored in 18-decimal fixed-point format (1e18 = 1.0)
+                // Divide by 1e18 to normalize the result
+                return (amount * parity) / 1e18;
             }
         }
         return 0;
