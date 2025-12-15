@@ -10,7 +10,7 @@ module.exports = {
       evmVersion: "cancun",
       optimizer: {
         enabled: true,
-        runs: 200, // Same as the value used in Remix
+        runs: 200,
       },
        viaIR: true,
   }
@@ -19,30 +19,31 @@ module.exports = {
     hardhat: {
       mining: {
         auto: true,
-        interval: 2000  // Mine a new block every 2 seconds
+        interval: 2000
       }
     },
     ganache: {
-      url: "http://127.0.0.1:7545",  
-      chainId: 1337,                // Your Ganache Chain ID
-      accounts: {                   // (Optional) Add Ganache account private keys if needed
-        mnemonic: "fruit insect love learn tower opera divide link intact always garment foam", 
+      url: "http://127.0.0.1:7545",
+      chainId: 1337,
+      accounts: {
+        mnemonic: "fruit insect love learn tower opera divide link intact always garment foam",
       }
     },
     sepolia: {
       url: `https://sepolia.infura.io/v3/${INFURA_API_KEY}`,
       chainId: 11155111,
-      accounts: [`0x${SEPOLIA_PRIVATE_KEY}`], // Ensure 0x is added here
+      accounts: [`0x${SEPOLIA_PRIVATE_KEY}`],
     },
     et: {
       url: `https://node.ghostnet.etherlink.com`,
       chainId: 128123,
-      accounts: [`0x${PRIVATE_KEY}`], // Ensure 0x is added here
+      accounts: [`0x${PRIVATE_KEY}`],
+      timeout: 180000,
     },
     etm: {
       url: `https://node.mainnet.etherlink.com`,
       chainId: 42793,
-      accounts: [`0x${PRIVATE_KEY}`], // Ensure 0x is added here
+      accounts: [`0x${PRIVATE_KEY}`],
     },
   }
 };
