@@ -138,7 +138,7 @@ describe("RepToken and Economy Integration", function () {
     it("should respect changes in parity for new claims", async function() {
         const tokenEarnings = ethers.parseEther("100");
         await updateEconomyState([{ user: contractor, amount: tokenEarnings, token: await testToken.getAddress(), type: 'earnings' }]);
-``
+
         const tokenParityKey = `jurisdiction.parity.${(await testToken.getAddress()).toLowerCase()}`;
         
         await registry.connect(timelock).editRegistry(tokenParityKey, "5");
