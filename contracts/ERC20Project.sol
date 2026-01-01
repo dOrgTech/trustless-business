@@ -216,7 +216,7 @@ contract ERC20Project is Initializable {
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
 
-        arbitrationFee = (projectValue * IGovernedEconomy(address(economy)).arbitrationFeeBps()) / 10000;
+        arbitrationFee = (totalLocked * IGovernedEconomy(address(economy)).arbitrationFeeBps()) / 10000;
         require(token.transferFrom(msg.sender, address(this), arbitrationFee / 2), "Must stake half the arbitration fee to sign.");
 
         stage = Stage.Ongoing;
@@ -469,8 +469,11 @@ contract ERC20Project is Initializable {
             // Post-signing: immediate is gone, only locked available
             expenditure = immediateAmount;
             if (arbitrationFeePaidOut) {
-                uint arbShare = (arbitrationFee / 2 * lockedAmount) / totalLocked;
-                exitAmount = ((lockedAmount - arbShare) * (100 - disputeResolution)) / 100;
+                // Use the same pool formula as contractor entitlement in _finalizeDispute
+                uint contributorShare = arbitrationFee - (arbitrationFee / 2);
+                uint pool = immediateReleased + totalLocked - contributorShare;
+                // Backer gets their proportional share of (100 - disputeResolution)% of the pool
+                exitAmount = ((pool * (100 - disputeResolution)) / 100) * contribTotal / projectValue;
             } else {
                 exitAmount = (lockedAmount * (100 - disputeResolution)) / 100;
             }

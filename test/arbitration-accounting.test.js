@@ -9,11 +9,12 @@ const { time } = require("@nomicfoundation/hardhat-network-helpers");
  * The key invariant: total funds in = total funds out (no funds stuck in contract).
  */
 describe("Arbitration Fund Accounting", function () {
-    let economy, nativeProjectImpl, erc20ProjectImpl, testToken, mockRepToken;
-    let deployer, timelock, registry, governor, author, contractor, arbiter, backer1, backer2;
+    let economy, nativeProjectImpl, erc20ProjectImpl, testToken, mockRepToken, mockGovernor;
+    let deployer, timelock, registry, author, contractor, arbiter, backer1, backer2;
 
     const NATIVE_CURRENCY = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
     const ARBITRATION_FEE_BPS = 100; // 1% for easy math
+    const PROJECT_THRESHOLD = ethers.parseEther("1000");
 
     async function createERC20Project() {
         const tx = await economy.connect(author).createERC20Project(
@@ -35,7 +36,7 @@ describe("Arbitration Fund Accounting", function () {
     }
 
     beforeEach(async function () {
-        [deployer, timelock, registry, governor, author, contractor, arbiter, backer1, backer2] = await ethers.getSigners();
+        [deployer, timelock, registry, author, contractor, arbiter, backer1, backer2] = await ethers.getSigners();
 
         const NativeProjectImpl = await ethers.getContractFactory("NativeProject");
         nativeProjectImpl = await NativeProjectImpl.deploy();
@@ -47,14 +48,22 @@ describe("Arbitration Fund Accounting", function () {
         testToken = await TestToken.deploy();
         const MockRepToken = await ethers.getContractFactory("MockRepToken");
         mockRepToken = await MockRepToken.deploy();
+        const MockGovernor = await ethers.getContractFactory("MockGovernor");
+        mockGovernor = await MockGovernor.deploy();
 
         await economy.connect(deployer).setImplementations(
             await nativeProjectImpl.getAddress(),
             await erc20ProjectImpl.getAddress()
         );
         await economy.connect(deployer).setDaoAddresses(
-            timelock.address, registry.address, governor.address, await mockRepToken.getAddress()
+            timelock.address, registry.address, await mockGovernor.getAddress(), await mockRepToken.getAddress()
         );
+
+        // Set DAO parameters
+        await economy.connect(timelock).setProjectThreshold(PROJECT_THRESHOLD);
+
+        // Mint reputation to author so they can create projects
+        await mockRepToken.mint(author.address, PROJECT_THRESHOLD);
 
         // Fund test accounts
         await testToken.connect(deployer).transfer(backer1.address, ethers.parseEther("10000"));
@@ -67,8 +76,10 @@ describe("Arbitration Fund Accounting", function () {
             const project = await createERC20Project();
             const fundingAmount = ethers.parseEther("1000");
             const immediateBps = 1000n; // 10% immediate release
-            const arbitrationFee = (fundingAmount * BigInt(ARBITRATION_FEE_BPS)) / 10000n; // 10 tokens
-            const contractorStake = arbitrationFee / 2n; // 5 tokens
+            // Arbitration fee is calculated from totalLocked (900), not projectValue (1000)
+            const totalLocked = fundingAmount - (fundingAmount * immediateBps) / 10000n; // 900
+            const arbitrationFee = (totalLocked * BigInt(ARBITRATION_FEE_BPS)) / 10000n; // 9 tokens
+            const contractorStake = arbitrationFee / 2n; // 4.5 tokens
 
             // Fund project WITH 10% immediate release (matches manual test scenario)
             await testToken.connect(backer1).approve(await project.getAddress(), fundingAmount);
@@ -161,6 +172,14 @@ describe("Arbitration Fund Accounting", function () {
             // Arbiter rules 30%
             await project.connect(arbiter).arbitrate(30, "ruling_hash");
 
+            // Setup mocks for a valid appeal
+            await mockRepToken.mint(backer1.address, PROJECT_THRESHOLD);
+            await mockGovernor.setProposalState(1); // Active state
+
+            // Appeal to move to Stage.Appeal
+            await project.connect(backer1).appeal(123, [await project.getAddress()]);
+            expect(await project.stage()).to.equal(5); // Appeal
+
             // DAO overrules to 90%
             await project.connect(timelock).daoOverrule(90, "dao_ruling");
 
@@ -215,9 +234,19 @@ describe("Arbitration Fund Accounting", function () {
             await project.connect(backer1).sendFunds({ value: fundingAmount });
             await project.connect(contractor).signContract({ value: contractorStake });
 
-            // Dispute, arbitrate, DAO overrule
+            // Dispute, arbitrate
             await project.connect(backer1).voteToDispute();
             await project.connect(arbiter).arbitrate(30, "ruling_hash");
+
+            // Setup mocks for a valid appeal
+            await mockRepToken.mint(backer1.address, PROJECT_THRESHOLD);
+            await mockGovernor.setProposalState(1); // Active state
+
+            // Appeal to move to Stage.Appeal
+            await project.connect(backer1).appeal(123, [await project.getAddress()]);
+            expect(await project.stage()).to.equal(5); // Appeal
+
+            // DAO overrules to 90%
             await project.connect(timelock).daoOverrule(90, "dao_ruling");
 
             // All parties withdraw
@@ -242,8 +271,6 @@ describe("Arbitration Fund Accounting", function () {
             const arbiterBalanceBefore = await testToken.balanceOf(arbiter.address);
             const contractorBalanceBefore = await testToken.balanceOf(contractor.address);
             const backer1BalanceBefore = await testToken.balanceOf(backer1.address);
-            const registryBalanceBefore = await testToken.balanceOf(registry.address);
-            const authorBalanceBefore = await testToken.balanceOf(author.address);
 
             // Setup: fund, sign, dispute, arbitrate, finalize
             await testToken.connect(backer1).approve(await project.getAddress(), fundingAmount);
@@ -262,24 +289,19 @@ describe("Arbitration Fund Accounting", function () {
 
             // Calculate net changes
             const arbiterGain = (await testToken.balanceOf(arbiter.address)) - arbiterBalanceBefore;
-            const contractorNet = (await testToken.balanceOf(contractor.address)) - contractorBalanceBefore;
-            const backer1Net = (await testToken.balanceOf(backer1.address)) - backer1BalanceBefore;
-            const registryGain = (await testToken.balanceOf(registry.address)) - registryBalanceBefore;
-            const authorGain = (await testToken.balanceOf(author.address)) - authorBalanceBefore;
+            const contractorAfter = await testToken.balanceOf(contractor.address);
+            const backer1After = await testToken.balanceOf(backer1.address);
 
             // Verify arbiter got the full arbitration fee
             expect(arbiterGain).to.equal(arbitrationFee, "Arbiter should receive full arbitration fee");
 
-            // Verify total funds distributed = total funds contributed
-            // Backer contributed fundingAmount, contractor contributed stake
-            // Net flow: backer1Net is negative (they spent), contractor may be positive or negative
-            const totalDistributed = arbiterGain + contractorNet + contractorStake + registryGain + authorGain;
-            const totalContributed = fundingAmount - (-backer1Net); // backer1Net is negative
+            // Verify project balance is zero (all funds distributed)
+            const finalBalance = await testToken.balanceOf(await project.getAddress());
+            expect(finalBalance).to.equal(0, "Project should have zero balance");
 
-            // The sum of all gains should equal the sum of all contributions
-            const allGains = arbiterGain + (contractorNet + contractorStake) + registryGain + authorGain;
-            expect(allGains + (-backer1Net)).to.equal(fundingAmount + contractorStake,
-                "All distributed funds should equal all contributed funds");
+            // Simple verification: contractor gets stake back + some from funding
+            // backer gets some refund based on dispute resolution
+            // The key test is that final balance is zero - all funds distributed
         });
     });
 });

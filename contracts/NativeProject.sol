@@ -222,9 +222,9 @@ contract NativeProject is Initializable {
         require(block.timestamp > coolingOffPeriodEnds, "Contract signing is blocked during the cooling-off period.");
         require(projectValue > 0, "Can't sign a contract with no funds in it.");
 
-        // Calculate arbitration fee based on total project value at signing time
+        // Calculate arbitration fee based on locked value only at signing time
         uint feeBps = IGovernedEconomy(address(economy)).arbitrationFeeBps();
-        arbitrationFee = (projectValue * feeBps) / 10000;
+        arbitrationFee = (totalLocked * feeBps) / 10000;
 
         // Contractor must stake their half of the arbitration fee
         require(msg.value >= arbitrationFee / 2, "Must stake half the arbitration fee to sign the contract.");
@@ -499,13 +499,12 @@ contract NativeProject is Initializable {
             expenditure = immediateAmount; // Immediate portion is an expenditure (went to contractor)
 
             if (arbitrationFeePaidOut) {
-                // Dispute occurred - arb fee comes from locked funds proportionally
-                uint contributorArbFeeShare = (arbitrationFee / 2 * lockedAmount) / totalLocked;
-                uint remainingLocked = lockedAmount - contributorArbFeeShare;
-                // disputeResolution % went to contractor, (100 - disputeResolution) % returns to backers
-                uint lockedReturn = (remainingLocked * (100 - disputeResolution)) / 100;
-                exitAmount = lockedReturn;
-                expenditure += (lockedAmount - lockedReturn); // Add locked portion that went to contractor/fees
+                // Use the same pool formula as contractor entitlement in _finalizeDispute
+                uint contributorShare = arbitrationFee - (arbitrationFee / 2);
+                uint pool = immediateReleased + totalLocked - contributorShare;
+                // Backer gets their proportional share of (100 - disputeResolution)% of the pool
+                exitAmount = ((pool * (100 - disputeResolution)) / 100) * contrib.total / projectValue;
+                expenditure += (lockedAmount - exitAmount);
             } else {
                 // No dispute (release vote or project cancelled)
                 // disputeResolution is 0 if cancelled, 100 if released
