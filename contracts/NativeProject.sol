@@ -396,26 +396,11 @@ contract NativeProject is Initializable {
         stage = Stage.Closed;
         arbitrationFeePaidOut = true;
 
-        // Arbiter fee: half from contractor's stake, half from locked funds
-        uint contractorStake = arbitrationFee / 2;
-        uint contributorShare = arbitrationFee - contractorStake; // Handles odd amounts
-
-        // Contractor's total entitlement is based on total project value (including immediate)
-        // But we deduct arb fee from locked portion only
-        uint lockedAfterArbFee = totalLocked - contributorShare;
-
-        // Calculate contractor's total entitlement from the dispute percentage
-        // This percentage applies to the total project value (immediate + locked - arb fee)
-        uint totalValueAfterArbFee = immediateReleased + lockedAfterArbFee;
-        uint contractorTotalEntitlement = (totalValueAfterArbFee * percent) / 100;
-
-        // Contractor already received immediateReleased, so availableToContractor is the remainder
-        if (contractorTotalEntitlement > immediateReleased) {
-            availableToContractor = contractorTotalEntitlement - immediateReleased;
-        } else {
-            // Contractor already received more than their entitlement via immediate
-            availableToContractor = 0;
-        }
+        // Arb fee: half from contractor's stake, half from backer pool
+        // Pool = totalLocked - backer's share of arb fee (immediateReleased already sent at signing)
+        uint backersArbShare = arbitrationFee - (arbitrationFee / 2); // Handles odd amounts
+        uint pool = totalLocked - backersArbShare;
+        availableToContractor = (pool * percent) / 100;
 
         if (arbiterHasRuled) {
             // Pay arbiter the full fee
@@ -499,11 +484,12 @@ contract NativeProject is Initializable {
             expenditure = immediateAmount; // Immediate portion is an expenditure (went to contractor)
 
             if (arbitrationFeePaidOut) {
-                // Use the same pool formula as contractor entitlement in _finalizeDispute
-                uint contributorShare = arbitrationFee - (arbitrationFee / 2);
-                uint pool = immediateReleased + totalLocked - contributorShare;
+                // Pool = totalLocked - backer's share of arb fee (same as _finalizeDispute)
+                uint backersArbShare = arbitrationFee - (arbitrationFee / 2);
+                uint pool = totalLocked - backersArbShare;
                 // Backer gets their proportional share of (100 - disputeResolution)% of the pool
-                exitAmount = ((pool * (100 - disputeResolution)) / 100) * contrib.total / projectValue;
+                // Proportion based on lockedAmount / totalLocked (not total contribution)
+                exitAmount = ((pool * (100 - disputeResolution)) / 100) * lockedAmount / totalLocked;
                 expenditure += (lockedAmount - exitAmount);
             } else {
                 // No dispute (release vote or project cancelled)

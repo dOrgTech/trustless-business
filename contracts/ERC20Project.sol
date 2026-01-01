@@ -392,10 +392,11 @@ contract ERC20Project is Initializable {
         stage = Stage.Closed;
         arbitrationFeePaidOut = true;
 
-        // Arb fee: half from contractor's stake, half from locked
-        uint contributorShare = arbitrationFee - (arbitrationFee / 2);
-        uint totalEntitlement = ((immediateReleased + totalLocked - contributorShare) * percent) / 100;
-        availableToContractor = totalEntitlement > immediateReleased ? totalEntitlement - immediateReleased : 0;
+        // Arb fee: half from contractor's stake, half from backer pool
+        // Pool = totalLocked - backer's share of arb fee (immediateReleased already sent at signing)
+        uint backersArbShare = arbitrationFee - (arbitrationFee / 2);
+        uint pool = totalLocked - backersArbShare;
+        availableToContractor = (pool * percent) / 100;
 
         if (arbiterHasRuled) {
             require(token.transfer(arbiter, arbitrationFee), "Failed to send arbitration fee to arbiter");
@@ -469,11 +470,12 @@ contract ERC20Project is Initializable {
             // Post-signing: immediate is gone, only locked available
             expenditure = immediateAmount;
             if (arbitrationFeePaidOut) {
-                // Use the same pool formula as contractor entitlement in _finalizeDispute
-                uint contributorShare = arbitrationFee - (arbitrationFee / 2);
-                uint pool = immediateReleased + totalLocked - contributorShare;
+                // Pool = totalLocked - backer's share of arb fee (same as _finalizeDispute)
+                uint backersArbShare = arbitrationFee - (arbitrationFee / 2);
+                uint pool = totalLocked - backersArbShare;
                 // Backer gets their proportional share of (100 - disputeResolution)% of the pool
-                exitAmount = ((pool * (100 - disputeResolution)) / 100) * contribTotal / projectValue;
+                // Proportion based on lockedAmount / totalLocked (not total contribution)
+                exitAmount = ((pool * (100 - disputeResolution)) / 100) * lockedAmount / totalLocked;
             } else {
                 exitAmount = (lockedAmount * (100 - disputeResolution)) / 100;
             }
