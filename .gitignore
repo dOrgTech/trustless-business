@@ -12,6 +12,7 @@ artifacts
 
 # Remix IDE state files
 .states/
+.deps/
 contracts/.states/
 contracts/.deps/
 
@@ -22,6 +23,14 @@ aiaccess.py
 TEST_PLAN.md
 SECURITY-AUDIT.md
 trustless-contracts.md
+
+# Task-specific docs (completed)
+ARBITRATION_REQUIREMENTS.md
+SOLUTION_TWO_FACTORIES.md
+TEST-PLAN-WEBAPP.md
+TRANSFERABILITY_FIX.md
+*-test-output.txt
+helper-contracts.txt
 
 # Deployment infrastructure (not needed for public repo)
 deployments/
