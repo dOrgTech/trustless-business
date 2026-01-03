@@ -45,5 +45,30 @@ module.exports = {
       chainId: 42793,
       accounts: [`0x${PRIVATE_KEY}`],
     },
-  }
+  },
+  etherscan: {
+    apiKey: {
+      // Blockscout doesn't require a real API key, just a non-empty string
+      et: "blockscout",
+      etm: "blockscout",
+    },
+    customChains: [
+      {
+        network: "et",
+        chainId: 128123,
+        urls: {
+          apiURL: "https://testnet.explorer.etherlink.com/api",
+          browserURL: "https://testnet.explorer.etherlink.com",
+        },
+      },
+      {
+        network: "etm",
+        chainId: 42793,
+        urls: {
+          apiURL: "https://explorer.etherlink.com/api",
+          browserURL: "https://explorer.etherlink.com",
+        },
+      },
+    ],
+  },
 };

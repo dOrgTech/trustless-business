@@ -22,7 +22,8 @@ contract NativeProject is Initializable {
     // Immediate release: backers can specify what portion is available to contractor at signing
     struct Contribution {
         uint total;           // Total amount contributed
-        uint immediateBps;    // Basis points released immediately (0 to maxImmediateBps)
+        uint immediate;       // Total immediate portion (released at signing)
+        uint locked;          // Total locked portion (in escrow until resolution)
     }
     mapping(address => Contribution) public contributions;
     uint public totalImmediate;    // Sum of all immediate portions (released at signing)
@@ -86,6 +87,8 @@ contract NativeProject is Initializable {
     event DaoOverruled(address indexed timelock, uint256 percent, string rulingHash);
     event AuthorPaid(address author, uint256 amount);
     event VetoedByDao(address indexed timelock);
+    event BackerVoteCast(address indexed voter, uint256 votingPower, bool forDispute);
+    event ArbitrationStakeReclaimed(address contractor, uint256 amount);
 
     function initialize(
         address payable _economy,
@@ -126,7 +129,8 @@ contract NativeProject is Initializable {
             backers.push(_author);
             contributions[_author] = Contribution({
                 total: msg.value,
-                immediateBps: 0
+                immediate: 0,
+                locked: msg.value
             });
             totalLocked = msg.value;
             projectValue = msg.value;
@@ -200,13 +204,13 @@ contract NativeProject is Initializable {
         if (contributions[msg.sender].total == 0) {
             backers.push(msg.sender);
             contributions[msg.sender].total = msg.value;
-            contributions[msg.sender].immediateBps = immediateBps;
+            contributions[msg.sender].immediate = immediateAmount;
+            contributions[msg.sender].locked = msg.value - immediateAmount;
         } else {
-            // Weighted average for additional contributions
-            uint oldTotal = contributions[msg.sender].total;
-            uint oldImmediate = (oldTotal * contributions[msg.sender].immediateBps) / 10000;
-            contributions[msg.sender].total = oldTotal + msg.value;
-            contributions[msg.sender].immediateBps = ((oldImmediate + immediateAmount) * 10000) / contributions[msg.sender].total;
+            // Accumulate actual amounts for additional contributions
+            contributions[msg.sender].total = contributions[msg.sender].total + msg.value;
+            contributions[msg.sender].immediate += immediateAmount;
+            contributions[msg.sender].locked += msg.value - immediateAmount;
         }
 
         totalImmediate += immediateAmount;
@@ -250,8 +254,8 @@ contract NativeProject is Initializable {
     // Helper to calculate locked amount for a contributor
     function _getLockedAmount(address contributor) internal view returns (uint) {
         Contribution memory contrib = contributions[contributor];
-        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
-        return contrib.total - immediateAmount;
+        // Use stored locked amount directly (no rounding errors)
+        return contrib.locked;
     }
 
     function voteToReleasePayment() public {
@@ -268,6 +272,7 @@ contract NativeProject is Initializable {
         if (contributorsReleasing[msg.sender] == 0) {
             totalVotesForRelease += lockedAmount;
             contributorsReleasing[msg.sender] = lockedAmount;
+            emit BackerVoteCast(msg.sender, lockedAmount, false);
         }
 
         // Quorum calculated against totalLocked (not totalImmediate which is already released)
@@ -295,6 +300,7 @@ contract NativeProject is Initializable {
         if (contributorsDisputing[msg.sender] == 0) {
             totalVotesForDispute += lockedAmount;
             contributorsDisputing[msg.sender] = lockedAmount;
+            emit BackerVoteCast(msg.sender, lockedAmount, true);
         }
 
         // Quorum calculated against totalLocked
@@ -460,13 +466,14 @@ contract NativeProject is Initializable {
         Contribution memory contrib = contributions[msg.sender];
         require(contrib.total > 0, "No contributions to withdraw.");
 
-        // Calculate immediate and locked portions
-        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
-        uint lockedAmount = contrib.total - immediateAmount;
+        // Use stored locked amount directly (no rounding errors)
+        uint lockedAmount = contrib.locked;
+        uint immediateAmount = contrib.immediate;
 
         // Clear the contribution
         contributions[msg.sender].total = 0;
-        contributions[msg.sender].immediateBps = 0;
+        contributions[msg.sender].immediate = 0;
+        contributions[msg.sender].locked = 0;
 
         uint256 exitAmount;
         uint256 expenditure;

@@ -1,46 +1,89 @@
-# Trustless Contracts
+# On-Chain Jurisdiction
 
-On-chain governance and trustless business infrastructure for the Homebase DAO platform.
+A framework for autonomous economic coordination through decentralized governance and trustless commerce.
 
-## Overview
+[![UI: werule.io](https://img.shields.io/badge/DAO%20Platform-werule.io-blue)](https://werule.io)
+[![UI: trustless.business](https://img.shields.io/badge/Trustless%20Economy-trustless.business-green)](https://trustless.business)
 
-This repository contains smart contracts that enable two complementary systems:
+## The Promise of Trustless Coordination
 
-1. **DAO Governance** - Token-based voting, proposals, treasury management
-2. **Trustless Economy** - Escrow-based business arrangements with arbitration
+Throughout history, economic progress has depended on systems of trust. Nations built legal frameworks, courts established precedent, and institutions emerged to mediate agreements between strangers. These systems enabled civilization to scale beyond tribal networks where everyone knew everyone else.
 
-Both systems are designed to work together: the Economy generates reputation that translates to governance power in the DAO.
+But these systems come with costs: bureaucratic overhead, jurisdictional boundaries, access inequality, and the ever-present risk of corruption. What if trust itself could be encoded into the fabric of our agreements?
 
-## The Vision
+**On-Chain Jurisdiction** represents a new paradigm: a self-enforcing framework where:
+- **Agreements execute automatically** according to predefined terms
+- **Disputes resolve through transparent arbitration** with built-in appeals
+- **Reputation accrues from real economic activity**, not credentials or social capital
+- **Governance power flows to those who contribute**, not those who merely invest
 
-Business arrangements constitute the driving force of our civilization and require a trusted system of incentives. These contracts provide an alternative to traditional frameworks, made possible by decentralized technology.
+This is not a replacement for traditional systems, but an alternative—one that exists alongside them, available to anyone with internet access and a desire to participate in trustless commerce.
 
-Since the conceptualization of consensus-driven digital networks, it became obvious that trust can be diffused and encoded within a network, negating the need for centralized intermediaries. Distributed equilibrium logic can now ensure the authenticity and execution integrity of transactions, resulting in self-enforcing agreements.
+## Two Systems, One Jurisdiction
 
-By supplanting centralized mechanisms with transparent, consensus-driven networks, we open the door to governance models that inherently foster an otherwise elusive level of auditability and fairness, placing decision-making closer to the ground and thus empowering individuals and communities.
+On-Chain Jurisdiction provides two complementary systems that work together:
 
-## Architecture
+### 1. DAO Governance
+
+Decentralized organizations with on-chain voting, treasury management, and transparent decision-making. Built on [OpenZeppelin's Governor framework](https://docs.openzeppelin.com/contracts/5.x/governance), our implementation adds:
+
+- **Reputation Tokens (RepToken)** that can be non-transferable to prevent vote-buying
+- **Registry** for treasury management and configuration storage
+- **Timelock security** for all governance actions
+- **Incentive epochs** for rewarding participation and delegation
+
+**Use cases:**
+- Protocol governance
+- Treasury management
+- Community coordination
+- Grant distribution
+
+### 2. Trustless Economy
+
+A marketplace for work where agreements self-enforce through smart contracts. Funds are held in escrow until work is verified, with a multi-layered dispute resolution system:
+
+- **Backer voting** for straightforward releases
+- **Third-party arbitration** when parties disagree
+- **DAO appeals** as a final safeguard against bad rulings
+
+Economic activity generates reputation, which translates to governance power. The more you contribute to the economy, the more influence you have over its rules.
+
+**Use cases:**
+- Freelance work and service agreements
+- Crowdfunded projects
+- DAO-to-DAO collaboration
+- Grant distribution with milestone tracking
+
+## How They Connect
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    TRUSTLESS FACTORY                         │
-│  (One-click deployment of complete DAO + Economy suites)     │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          ↓               ↓               ↓
-┌─────────────────┐ ┌───────────┐ ┌─────────────────┐
-│   HomebaseDAO   │ │  Economy  │ │    Registry     │
-│   (Governor)    │ │(Marketplace)│ │   (Treasury)    │
-└────────┬────────┘ └─────┬─────┘ └────────┬────────┘
-         │                │                │
-         └────────────────┼────────────────┘
-                          │
-                    ┌─────┴─────┐
-                    │  RepToken │
-                    │(Governance)│
-                    └───────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         JURISDICTION                                 │
+│                                                                      │
+│  ┌─────────────────────┐         ┌─────────────────────────────┐     │
+│  │   DAO Governance    │◄───────►│    Trustless Economy        │     │
+│  │                     │         │                             │     │
+│  │  • Proposals        │ Appeals │  • Projects with escrow     │     │
+│  │  • Voting           │◄────────│  • Arbitration              │     │
+│  │  • Treasury         │         │  • Reputation tracking      │     │
+│  │  • Parameter tuning │────────►│  • Fee collection           │     │
+│  └──────────┬──────────┘         └──────────────┬──────────────┘     │
+│             │                                    │                   │
+│             └──────────────┬─────────────────────┘                   │
+│                            │                                         │
+│                   ┌────────▼────────┐                                │
+│                   │    RepToken     │                                │
+│                   │                 │                                │
+│                   │ Governance power│                                │
+│                   │ from economic   │                                │
+│                   │ activity        │                                │
+│                   └─────────────────┘                                │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+1. **Activity generates reputation**: Complete projects, fund work, or arbitrate disputes → earn RepTokens
+2. **Reputation enables governance**: Hold RepTokens → vote on proposals, create proposals, appeal rulings
+3. **Governance shapes the economy**: DAO votes set fees, quorums, thresholds, and can override arbitration
 
 ## Quick Start
 
@@ -52,7 +95,6 @@ By supplanting centralized mechanisms with transparent, consensus-driven network
 ### Installation
 
 ```bash
-cd trustless-contracts
 npm install
 ```
 
@@ -62,127 +104,15 @@ npm install
 npx hardhat compile
 ```
 
-### Deploy
+### Deploy a DAO
 
 ```bash
-# Standard DAO (no economy)
+# Standard DAO (governance only)
 npx hardhat run scripts/deployStandardFactory.js --network et
 
-# Economy DAO (with marketplace)
+# Economy DAO (governance + marketplace)
 npx hardhat run scripts/deployTrustlessFactory.js --network et
 ```
-
-## Contract Types
-
-### Standard DAO
-
-A governance-only DAO with:
-- Token-based voting (RepToken)
-- Proposal lifecycle management
-- Treasury via Registry
-- Configurable quorum and voting periods
-
-**Use Cases:**
-- Protocol governance
-- Treasury management
-- Community decision-making
-
-### Economy DAO
-
-Everything in a Standard DAO, plus:
-- Trustless marketplace (Economy)
-- Escrow-based projects
-- Arbitration and appeals
-- Reputation accrual from activity
-
-**Use Cases:**
-- Freelance marketplaces
-- DAO-to-DAO collaboration
-- Grant distribution
-- Service agreements
-
-## Factory Contracts
-
-| Factory | Description | Token Type |
-|---------|-------------|------------|
-| `StandardFactory` | Standard DAO | Non-transferable |
-| `StandardFactoryTransferable` | Standard DAO | Transferable |
-| `StandardFactoryWrapped` | Wrap existing ERC20 | Wrapped |
-| `TrustlessFactory` | Economy DAO | Non-transferable |
-
-### Deployed Addresses (Etherlink Testnet)
-
-```
-StandardFactory: 0xeB7509CC4496C857a3EC2D722d3AA10da419725d
-InfrastructureFactory: 0xaAee6c3C383D8f85920977375561fcb7CdA5543b
-DAOFactory: 0x72C0413227418e4C1bbA40559c762c15A1417db7
-RepTokenFactory: 0x440a296CF621F704ac25F5F27FB3d043F7B95F05
-```
-
-## Core Concepts
-
-### Proposal Lifecycle
-
-```
-Pending → Active → Succeeded → Queued → Executed
-```
-
-1. Member creates proposal
-2. Voting delay passes
-3. Members vote during voting period
-4. If passed, proposal queued in timelock
-5. After execution delay, anyone can execute
-
-### Project Lifecycle (Economy)
-
-```
-Open → Pending → Ongoing → Dispute → Appealable → Closed
-```
-
-1. Author creates project with terms
-2. Author funds escrow, sets parties
-3. Contractor signs and begins work
-4. Backers vote to release or dispute
-5. Arbiter resolves disputes
-6. DAO can appeal arbiter decisions
-
-### Reputation Flow
-
-```
-User completes project → Economy tracks earnings/spendings
-                                    ↓
-User claims reputation → RepToken mints based on activity
-                                    ↓
-User delegates votes → Can participate in governance
-```
-
-## Documentation
-
-Detailed documentation is available in the `/docs` folder:
-
-- **[DAO.md](docs/DAO.md)** - Governance system, RepToken, Registry, proposals
-- **[ECONOMY.md](docs/ECONOMY.md)** - Marketplace, projects, escrow, arbitration
-- **[FACTORIES.md](docs/FACTORIES.md)** - Deployment patterns, factory contracts
-
-## Key Features
-
-### Non-Transferable Tokens
-
-By default, governance tokens are non-transferable to prevent vote buying. Users earn reputation through economic activity rather than purchasing it.
-
-### Timelock Security
-
-All governance actions pass through a TimelockController with configurable delays, giving the community time to react to malicious proposals.
-
-### Appeal System
-
-Arbiter decisions can be appealed to the DAO. Any member with sufficient voting power can initiate an appeal by creating a governance proposal.
-
-### Earmarking
-
-The Registry supports earmarking funds for specific purposes (e.g., passive income epochs), with automated disbursement and reclaim mechanisms.
-
-## Development
 
 ### Run Tests
 
@@ -190,36 +120,112 @@ The Registry supports earmarking funds for specific purposes (e.g., passive inco
 npx hardhat test
 ```
 
-### Local Testing
+## Documentation
 
-```bash
-# Start local node
-npx hardhat node
+Detailed documentation is organized into chapters:
 
-# Deploy to localhost
-npx hardhat run scripts/deployStandardFactory.js --network localhost
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/architecture.md) | System design, contract relationships, deployment patterns |
+| [DAO Governance](docs/dao-governance.md) | Voting, proposals, RepToken, Registry, OpenZeppelin integration |
+| [Trustless Economy](docs/economy.md) | Project lifecycle, escrow, arbitration, dispute resolution |
+| [Technical Reference](docs/technical-reference.md) | Contract functions, parameters, events, deployed addresses |
+
+## Contract Overview
+
+### Core Contracts
+
+| Contract | Purpose |
+|----------|---------|
+| `HomebaseDAO` | Governor contract implementing proposal and voting lifecycle |
+| `RepToken` | ERC20Votes governance token with reputation accrual from Economy |
+| `Registry` | Treasury (ETH, ERC20, ERC721) and configuration key-value store |
+| `TimelockController` | Execution delay for all governance actions |
+| `Economy` | Marketplace contract that deploys and tracks projects |
+| `NativeProject` | Escrow contract for native currency (ETH/XTZ) projects |
+| `ERC20Project` | Escrow contract for ERC20 token projects |
+
+### Factory Contracts
+
+| Factory | Creates | Token Type |
+|---------|---------|------------|
+| `StandardFactory` | DAO without economy | Non-transferable RepToken |
+| `StandardFactoryTransferable` | DAO without economy | Transferable RepToken |
+| `StandardFactoryWrapped` | DAO wrapping existing ERC20 | WrappedRepToken |
+| `TrustlessFactory` | DAO with economy | Non-transferable RepToken |
+
+## Key Concepts
+
+### Non-Transferable Governance
+
+By default, RepTokens cannot be transferred. This prevents vote-buying and ensures governance power comes from participation, not purchase. Users earn reputation through:
+
+- Completing work as a contractor
+- Funding projects as a backer
+- Resolving disputes as an arbiter
+
+### Timelock Security
+
+All governance actions pass through a TimelockController with configurable delays. This gives the community time to:
+
+- Review approved proposals before execution
+- Exit the system if they disagree with a decision
+- Coordinate response to malicious proposals
+
+### Multi-Layer Dispute Resolution
+
+Projects can become contentious. The system provides multiple resolution paths:
+
+1. **Backer consensus**: If 70%+ of backers agree, funds release or dispute
+2. **Arbitration**: A designated arbiter rules on the split
+3. **DAO appeal**: Any member with sufficient reputation can appeal to governance
+4. **Timeout**: If arbiters fail to act, projects auto-close after 150 days
+
+### Immediate Release
+
+Backers can choose to release a portion of their contribution immediately upon contract signing, allowing contractors to access operating capital. The remainder stays in escrow until project completion.
+
+## Deployed Addresses
+
+### Etherlink Testnet
+
 ```
-
-### Network Configuration
-
-Networks are defined in `hardhat.config.js`:
-- `localhost` - Local Hardhat node
-- `et` - Etherlink testnet
-- `sepolia` - Ethereum Sepolia testnet
+StandardFactory:        0xeB7509CC4496C857a3EC2D722d3AA10da419725d
+InfrastructureFactory:  0xaAee6c3C383D8f85920977375561fcb7CdA5543b
+DAOFactory:             0x72C0413227418e4C1bbA40559c762c15A1417db7
+RepTokenFactory:        0x440a296CF621F704ac25F5F27FB3d043F7B95F05
+```
 
 ## Tech Stack
 
-- **Language**: Solidity ^0.8.24
-- **Framework**: Hardhat
-- **Dependencies**: OpenZeppelin Contracts 5.x
+- **Solidity** ^0.8.24 (compiled with 0.8.26, Cancun EVM)
+- **Hardhat** development environment
+- **OpenZeppelin Contracts** 5.x
 
-## Security Considerations
+## Security Model
 
-1. **Vote Buying Prevention** - Non-transferable tokens by default
-2. **Flash Loan Protection** - Snapshot-based voting power
-3. **Timelock Delays** - All actions have execution delay
-4. **Reentrancy Guards** - Protected treasury operations
-5. **Appeal Mechanism** - DAO oversight of arbitration
+| Threat | Mitigation |
+|--------|------------|
+| Vote buying | Non-transferable tokens by default |
+| Flash loan attacks | Snapshot-based voting power |
+| Malicious proposals | Timelock execution delay |
+| Bad arbitration | DAO appeal system |
+| Reentrancy | ReentrancyGuard on treasury operations |
+| Abandoned projects | 150-day arbitration timeout |
+
+## Web Interfaces
+
+- **[werule.io](https://werule.io)** - DAO governance platform
+- **[trustless.business](https://trustless.business)** - Trustless Economy marketplace
+
+## Contributing
+
+Contributions are welcome. Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Write tests for new functionality
+4. Submit a pull request
 
 ## License
 

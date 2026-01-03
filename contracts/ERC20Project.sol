@@ -24,7 +24,8 @@ contract ERC20Project is Initializable {
     // Immediate release: backers can specify what portion is available to contractor at signing
     struct Contribution {
         uint total;           // Total amount contributed
-        uint immediateBps;    // Basis points released immediately (0 to maxImmediateBps)
+        uint immediate;       // Total immediate portion (released at signing)
+        uint locked;          // Total locked portion (in escrow until resolution)
     }
     mapping(address => Contribution) public contributions;
     uint public totalImmediate;    // Sum of all immediate portions (released at signing)
@@ -88,6 +89,7 @@ contract ERC20Project is Initializable {
     event AuthorPaid(address author, uint256 amount);
     event VetoedByDao(address indexed timelock);
     event OrphanedTokensSwept(address indexed token, uint256 amount);
+    event BackerVoteCast(address indexed voter, uint256 votingPower, bool forDispute);
 
     function initialize(
         address payable _economy,
@@ -194,13 +196,13 @@ contract ERC20Project is Initializable {
         if (contributions[msg.sender].total == 0) {
             backers.push(msg.sender);
             contributions[msg.sender].total = amount;
-            contributions[msg.sender].immediateBps = immediateBps;
+            contributions[msg.sender].immediate = immediateAmount;
+            contributions[msg.sender].locked = amount - immediateAmount;
         } else {
-            // Weighted average for additional contributions
-            uint oldTotal = contributions[msg.sender].total;
-            uint oldImmediate = (oldTotal * contributions[msg.sender].immediateBps) / 10000;
-            contributions[msg.sender].total = oldTotal + amount;
-            contributions[msg.sender].immediateBps = ((oldImmediate + immediateAmount) * 10000) / contributions[msg.sender].total;
+            // Accumulate actual amounts for additional contributions
+            contributions[msg.sender].total = contributions[msg.sender].total + amount;
+            contributions[msg.sender].immediate += immediateAmount;
+            contributions[msg.sender].locked += amount - immediateAmount;
         }
 
         totalImmediate += immediateAmount;
@@ -234,8 +236,8 @@ contract ERC20Project is Initializable {
     // Helper to calculate locked amount for a contributor
     function _getLockedAmount(address contributor) internal view returns (uint) {
         Contribution memory contrib = contributions[contributor];
-        uint immediateAmount = (contrib.total * contrib.immediateBps) / 10000;
-        return contrib.total - immediateAmount;
+        // Use stored locked amount directly (no rounding errors)
+        return contrib.locked;
     }
 
     function voteToReleasePayment() public {
@@ -252,6 +254,7 @@ contract ERC20Project is Initializable {
         if (contributorsReleasing[msg.sender] == 0) {
             totalVotesForRelease += lockedAmount;
             contributorsReleasing[msg.sender] = lockedAmount;
+            emit BackerVoteCast(msg.sender, lockedAmount, false);
         }
 
         // Quorum calculated against totalLocked (not totalImmediate which is already released)
@@ -279,6 +282,7 @@ contract ERC20Project is Initializable {
         if (contributorsDisputing[msg.sender] == 0) {
             totalVotesForDispute += lockedAmount;
             contributorsDisputing[msg.sender] = lockedAmount;
+            emit BackerVoteCast(msg.sender, lockedAmount, true);
         }
 
         // Quorum calculated against totalLocked
@@ -446,16 +450,18 @@ contract ERC20Project is Initializable {
         require(stage == Stage.Open || stage == Stage.Pending || stage == Stage.Closed, "Withdrawals only allowed when the project is open, pending or closed.");
 
         uint contribTotal = contributions[msg.sender].total;
-        uint contribImmediateBps = contributions[msg.sender].immediateBps;
+        uint contribImmediate = contributions[msg.sender].immediate;
+        uint contribLocked = contributions[msg.sender].locked;
         require(contribTotal > 0, "No contributions to withdraw.");
 
         // Calculate immediate and locked portions
-        uint immediateAmount = (contribTotal * contribImmediateBps) / 10000;
-        uint lockedAmount = contribTotal - immediateAmount;
+        uint immediateAmount = contribImmediate;
+        uint lockedAmount = contribLocked;
 
         // Clear the contribution
         contributions[msg.sender].total = 0;
-        contributions[msg.sender].immediateBps = 0;
+        contributions[msg.sender].immediate = 0;
+        contributions[msg.sender].locked = 0;
 
         uint256 exitAmount;
         uint256 expenditure;
@@ -463,12 +469,12 @@ contract ERC20Project is Initializable {
         if (stage == Stage.Open || stage == Stage.Pending) {
             // Pre-signing withdrawal: get everything back
             exitAmount = contribTotal;
-            totalImmediate -= immediateAmount;
-            totalLocked -= lockedAmount;
+            totalImmediate -= contribImmediate;
+            totalLocked -= contribLocked;
             projectValue -= contribTotal;
         } else {
             // Post-signing: immediate is gone, only locked available
-            expenditure = immediateAmount;
+            expenditure = contribImmediate;
             if (arbitrationFeePaidOut) {
                 // Pool = totalLocked - backer's share of arb fee (same as _finalizeDispute)
                 uint backersArbShare = arbitrationFee - (arbitrationFee / 2);

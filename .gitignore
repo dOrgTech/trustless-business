@@ -5,7 +5,34 @@ coverage.json
 typechain
 typechain-types
 config.js
+
 # Hardhat files
 cache
 artifacts
+
+# Remix IDE state files
+.states/
+contracts/.states/
+contracts/.deps/
+
+# AI/development files
+.aiaccess
+aiaccess.py
+*.backup
+TEST_PLAN.md
 SECURITY-AUDIT.md
+trustless-contracts.md
+
+# Deployment infrastructure (not needed for public repo)
+deployments/
+
+# Debug and utility scripts
+scripts/check*.js
+scripts/debug*.js
+scripts/redeploy*.js
+scripts/setFirestore*.js
+scripts/testCreate*.js
+scripts/update*.js
+scripts/verify*.js
+scripts/deployDebateFactory.js
+scripts/deployTestUSDC.js
